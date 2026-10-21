@@ -16,8 +16,8 @@ const LEGACY_STORAGE_KEY = "steam_vault_language";
 
 const GATEWAYS = [
   "https://api.helix-origin.club",
-  "https://api.helix-origin.club/helix-gaming-db-00",
-  "https://raw.githubusercontent.com/HELIX-Origin/helix-gaming-db-00/main"
+  "https://api.helix-origin.club/ugl-db-00",
+  "https://raw.githubusercontent.com/HELIX-Origin/ugl-db-00/main"
 ];
 
 /** Get initial language choice from storage, browser preference, or default to English. */

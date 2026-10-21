@@ -1527,46 +1527,66 @@ pub fn launch_game(
             || p_lower.ends_with("legendary")
     });
 
-    // 1. Direct executable launch: If a valid executable file exists on disk, run it directly without intermediate wrappers
-    if let Some(ref path_str) = cleaned_exe {
-        if !is_wrapper {
-            let p = Path::new(path_str);
-            if p.is_file() {
-                let mut cmd = std::process::Command::new(p);
-                if let Some(parent) = p.parent() {
-                    cmd.current_dir(parent);
-                }
-                if cmd.spawn().is_ok() {
-                    return Ok(true);
+    // Platforms whose games MUST be launched through their store/launcher protocol.
+    // itch.io and GOG (and standalone/local titles) may be launched directly.
+    let requires_store_launch = matches!(
+        platform.as_deref().map(|p| p.to_lowercase()).as_deref(),
+        Some("steam")
+            | Some("epic")
+            | Some("battlenet")
+            | Some("ubisoft")
+            | Some("ea")
+            | Some("rockstar")
+            | Some("amazon")
+            | Some("xbox")
+    );
+
+    // Direct executable launch is only attempted FIRST for titles that do not
+    // require a store launcher (standalone, itch.io, GOG). Platform-distributed
+    // games must go through their launcher so DRM/overlay/account injection works.
+    if !requires_store_launch {
+        if let Some(ref path_str) = cleaned_exe {
+            if !is_wrapper {
+                let p = Path::new(path_str);
+                if p.is_file() {
+                    let mut cmd = std::process::Command::new(p);
+                    if let Some(parent) = p.parent() {
+                        cmd.current_dir(parent);
+                    }
+                    if cmd.spawn().is_ok() {
+                        return Ok(true);
+                    }
                 }
             }
         }
-    }
 
-    // Direct launch for installed Steam games: check common install directory for main binary
-    if app_id > 0 && app_id < 0x80000000 && cleaned_exe.is_none() {
-        if let Ok(root) = steam_root(&state) {
-            let libraries = crate::steam::paths::read_library_folders(&root);
-            for lib in &libraries {
-                let manifest_path = Path::new(&lib.path)
-                    .join("steamapps")
-                    .join(format!("appmanifest_{app_id}.acf"));
-                if manifest_path.is_file() {
-                    if let Ok(text) = std::fs::read_to_string(&manifest_path) {
-                        if let Ok(doc) = crate::steam::vdf::parse(&text) {
-                            if let Some(state_node) = doc.get("AppState") {
-                                if let Some(installdir) = state_node.get_str("installdir") {
-                                    let game_dir = Path::new(&lib.path)
-                                        .join("steamapps")
-                                        .join("common")
-                                        .join(installdir);
-                                    if let Some(direct_exe) = find_main_executable_in_dir(&game_dir) {
-                                        let mut cmd = std::process::Command::new(&direct_exe);
-                                        if let Some(parent) = direct_exe.parent() {
-                                            cmd.current_dir(parent);
-                                        }
-                                        if cmd.spawn().is_ok() {
-                                            return Ok(true);
+        // Direct launch for installed Steam games is not applicable here (Steam
+        // requires store launch), but keep the binary scan as a fallback for
+        // local titles without an exe path.
+        if app_id > 0 && app_id < 0x80000000 && cleaned_exe.is_none() && !requires_store_launch {
+            if let Ok(root) = steam_root(&state) {
+                let libraries = crate::steam::paths::read_library_folders(&root);
+                for lib in &libraries {
+                    let manifest_path = Path::new(&lib.path)
+                        .join("steamapps")
+                        .join(format!("appmanifest_{app_id}.acf"));
+                    if manifest_path.is_file() {
+                        if let Ok(text) = std::fs::read_to_string(&manifest_path) {
+                            if let Ok(doc) = crate::steam::vdf::parse(&text) {
+                                if let Some(state_node) = doc.get("AppState") {
+                                    if let Some(installdir) = state_node.get_str("installdir") {
+                                        let game_dir = Path::new(&lib.path)
+                                            .join("steamapps")
+                                            .join("common")
+                                            .join(installdir);
+                                        if let Some(direct_exe) = find_main_executable_in_dir(&game_dir) {
+                                            let mut cmd = std::process::Command::new(&direct_exe);
+                                            if let Some(parent) = direct_exe.parent() {
+                                                cmd.current_dir(parent);
+                                            }
+                                            if cmd.spawn().is_ok() {
+                                                return Ok(true);
+                                            }
                                         }
                                     }
                                 }
@@ -1634,11 +1654,49 @@ pub fn launch_game(
         }
     }
 
-    // 5. Steam protocol for native Steam games (never use steam:// for non-Steam shortcuts)
+    // 5. Steam launch for native Steam games. Invoke Steam's own executable so the
+    //    account/session is passed to the game (cmd /c start steam://... bypasses
+    //    Steam's injection and breaks titles like RuneScape/Jagex). Fall back to
+    //    the protocol handler only if the executable cannot be located.
     if app_id > 0 && app_id < 0x80000000 {
+        if let Ok(root) = steam_root(&state) {
+            #[cfg(target_os = "windows")]
+            let steam_exe = root.join("steam.exe");
+            #[cfg(target_os = "macos")]
+            let steam_exe = root.join("steam");
+            #[cfg(target_os = "linux")]
+            let steam_exe = root.join("steam.sh");
+            if steam_exe.is_file() {
+                let mut cmd = std::process::Command::new(&steam_exe);
+                cmd.arg(format!("steam://run/{app_id}"));
+                if cmd.spawn().is_ok() {
+                    return Ok(true);
+                }
+            }
+        }
         let uri = format!("steam://run/{app_id}");
         if open_external_target(&uri).is_ok() {
             return Ok(true);
+        }
+    }
+
+    // 6. Last-resort direct executable launch for platform games whose store
+    //    protocol did not resolve (e.g. launcher not installed). Only attempt
+    //    when a concrete executable is known on disk.
+    if requires_store_launch {
+        if let Some(ref path_str) = cleaned_exe {
+            if !is_wrapper {
+                let p = Path::new(path_str);
+                if p.is_file() {
+                    let mut cmd = std::process::Command::new(p);
+                    if let Some(parent) = p.parent() {
+                        cmd.current_dir(parent);
+                    }
+                    if cmd.spawn().is_ok() {
+                        return Ok(true);
+                    }
+                }
+            }
         }
     }
 

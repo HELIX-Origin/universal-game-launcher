@@ -516,6 +516,42 @@
             {/if}
           </div>
         </section>
+
+        <!-- Game Platform APIs & Launchers -->
+        <section class="glass-strong card">
+          <h2 class="section-title" style="margin-bottom:0.5rem">Game Platform APIs & Launchers</h2>
+          <p class="muted-xs" style="margin-bottom:1rem">
+            API keys and launcher paths for platforms that require them. Launchers are auto-detected; these are only needed for extended metadata and advanced launch support.
+          </p>
+
+          <div class="field">
+            <label for="steam-web-api">Steam Web API Key</label>
+            <input id="steam-web-api" type="password" bind:value={form.steamApiKey} placeholder="Steam Web API key" />
+          </div>
+
+          <div class="field">
+            <label for="gw2-api">Guild Wars 2 API Key</label>
+            <input id="gw2-api" type="password" bind:value={form.gw2ApiKey} placeholder="GW2 API key" />
+          </div>
+
+          <div class="field">
+            <label for="jagex-path">Jagex Launcher Path</label>
+            <input id="jagex-path" bind:value={form.jagexLauncherPath} placeholder="Path to Jagex Launcher executable" />
+          </div>
+
+          <div class="field">
+            <label for="xiv-path">XIV Launcher Path</label>
+            <input id="xiv-path" bind:value={form.xivLauncherPath} placeholder="Path to XIV Launcher executable" />
+          </div>
+
+          <label class="row" style="gap: 0.6rem; align-items: center; margin-top: 0.75rem; cursor: pointer;">
+            <input type="checkbox" bind:checked={form.legendaryEnabled} style="width: auto;" />
+            <div>
+              <strong style="font-size: 0.88rem; display: block;">Use Legendary (bypass Epic Games Launcher)</strong>
+              <span class="muted-xs">Prefer the Legendary CLI for Epic titles when available.</span>
+            </div>
+          </label>
+        </section>
       </div>
     </div>
 

@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use Universal Game Launcher in your work, please cite it as below."
+title: "Universal Game Launcher"
+abstract: "A high-performance, unified cross-platform desktop gaming hub, multi-platform library manager, and automatic metadata enrichment studio built on Tauri v2."
+type: software
+authors:
+  - name: "HELIX Origin"
+    alias: "HELIX-Origin"
+    website: "https://www.helix-origin.club"
+license: MIT
+repository-code: "https://github.com/HELIX-Origin/universal-game-launcher"
+url: "https://docs.helix-origin.club/universal-game-launcher/"
+version: 1.4.1
+date-released: 2026-10-18
+keywords:
+  - universal-game-launcher
+  - gaming
+  - library
+  - tauri
+  - metadata
+  - svelte

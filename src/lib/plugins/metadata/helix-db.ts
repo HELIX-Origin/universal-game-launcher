@@ -144,9 +144,9 @@ function getCandidateGateways(customBase?: string, shard: string = "00"): string
     // 1. Cloudflare Worker Unified Gateway (Mode 2 — aggregates across all shards automatically)
     "https://api.helix-origin.club",
     // 2. Direct Shard Proxies (Mode 1)
-    `https://api.helix-origin.club/helix-gaming-db-${shard}`,
+    `https://api.helix-origin.club/ugl-db-${shard}`,
     // 3. Raw GitHub CDN Fallback
-    `https://raw.githubusercontent.com/HELIX-Origin/helix-gaming-db-${shard}/main`,
+    `https://raw.githubusercontent.com/HELIX-Origin/ugl-db-${shard}/main`,
   ];
 }
 
@@ -324,7 +324,7 @@ export async function getHelixDbGame(
   }
 
   // 2. Federated multi-repo resolution if hosted on dedicated shard repository
-  if (meta?.repository && meta.repository !== "HELIX-Origin/helix-gaming-db-00") {
+  if (meta?.repository && meta.repository !== "HELIX-Origin/ugl-db-00") {
     const shardName = meta.repository.replace("HELIX-Origin/", "");
     const shardProxyUrl = `https://api.helix-origin.club/${shardName}/api/${tier}/games/${slug}.json`;
     const rawShardUrl = `https://raw.githubusercontent.com/${meta.repository}/main/api/${tier}/games/${slug}.json`;
@@ -516,7 +516,7 @@ export const helixDbMetadataPlugin: UniversalPlugin = {
   author: "HELIX Origin",
   description:
     "Authoritative open REST metadata API and gaming database for PC, indie, Patreon, and emulation titles.",
-  homepage: "https://docs.helix-origin.club/helix-gaming-db/",
+  homepage: "https://docs.helix-origin.club/ugl-db/",
   features: ["indie_metadata", "patreon_titles", "verified_artwork", "offline_fallback", "adult_v3_tier", "i18n_localization", "multi_repo_federation"],
 
   getSettingsSchema(): PluginSettingsConfig {

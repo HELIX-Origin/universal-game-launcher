@@ -1,11 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 📖 Universal Game Launcher Documentation
-    url: https://github.com/HELIX-Origin/Universal-Game-Launcher/tree/main/docs
-    about: Read the user guide, architecture wiki, and troubleshooting documentation.
-  - name: 💬 Discord Community
-    url: https://discord.com/invite/Ww3XBZC2HV
-    about: Join our Discord server to ask questions, share collection ideas, or engage with the community.
-  - name: 🔒 Security & Privacy Policy
-    url: https://github.com/HELIX-Origin/Universal-Game-Launcher/blob/main/SECURITY.md
-    about: Guidelines on secret storage, local-only offline operations, and responsible disclosure.
+  - name: 📖 Documentation
+    url: https://docs.helix-origin.club/{universal-game-launcher}/
+    about: Installation, setup, and usage guides.
+  - name: 🧠 Technical Wiki
+    url: https://wiki.helix-origin.club/{universal-game-launcher}/
+    about: Architecture, internals, and developer references.
+  - name: 💬 Discussions
+    url: https://github.com/HELIX-Origin/{universal-game-launcher}/discussions
+    about: Ask questions and share ideas with the community.
+  - name: 🔒 Security
+    url: https://github.com/HELIX-Origin/{universal-game-launcher}/security
+    about: Report a security vulnerability privately (do not open a public issue).

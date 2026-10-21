@@ -185,6 +185,10 @@ export interface Settings {
   steamgriddbApiKey: string | null;
   igdbClientId: string | null;
   igdbClientSecret: string | null;
+  gw2ApiKey: string | null;
+  jagexLauncherPath: string | null;
+  xivLauncherPath: string | null;
+  legendaryEnabled: boolean;
   countryCode: string;
   language: string;
   autoBackup: boolean;
