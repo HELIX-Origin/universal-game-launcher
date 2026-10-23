@@ -107,7 +107,7 @@
 - **CMake**: Ensure proper configuration of build targets, include directories, and linking for both the main executable and companion DLLs.
 - **Static Analysis & Linting**: Integrate tools like clang-tidy and include-what-you-use to enforce code quality and catch potential issues early in the development cycle.
 - **Testing & Validation**: Establish unit tests, integration tests, and end-to-end validation routines to ensure the stability and correctness of both the core engine and the shell extension components.
-- **Packaging**: Combined native MSI/NSIS installer managing registry hooks, the native companion .dll, and the background configuration utility asset binaries.
+- **Packaging**: Combined native MSI/NSIS installer managing registry hooks, the native companion .dll, and the background configuration utility asset binaries with automated WinGet package manager repository release management integrated into the build pipeline.
 
 ---
 
