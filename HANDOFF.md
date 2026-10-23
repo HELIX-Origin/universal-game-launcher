@@ -104,7 +104,8 @@
 
 ## Tooling & Quality Gate
 - **C++ Engine**: MSVC toolchain compiling with C++20 compliance; standard warning level /W4 enforced.
-- **Rust Core**: cargo test and RUSTFLAGS="-D warnings" cargo check clean loops in backend modules.
+- **CMake**: Ensure proper configuration of build targets, include directories, and linking for both the main executable and companion DLLs.
+- **Static Analysis & Linting**: Integrate tools like clang-tidy and include-what-you-use to enforce code quality and catch potential issues early in the development cycle.
 - **Packaging**: Combined native MSI/NSIS installer managing registry hooks, the native companion .dll, and the background configuration utility asset binaries.
 
 ---
