@@ -23,6 +23,8 @@
     "test:frontend": "node scripts/test.mjs frontend",
     "test:all": "node scripts/test.mjs all",
     "verify": "node scripts/test.mjs check rust frontend build",
+    "bench": "node scripts/bench.mjs",
+    "bench:debug": "node scripts/bench.mjs --debug",
     "sign": "node scripts/sign.mjs",
     "sign:windows": "node scripts/sign.mjs windows",
     "sign:linux": "node scripts/sign.mjs linux",

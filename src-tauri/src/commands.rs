@@ -111,6 +111,9 @@ pub async fn load_library(
     force_reload: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<Game>> {
+    if let Some(n) = crate::bench::mock_library_size() {
+        return Ok(crate::bench::mock_games(n));
+    }
     let cache_key = format!("library:{}", account_id3.as_deref().unwrap_or("default"));
     if force_reload != Some(true) {
         let cache = state.cache.lock().expect("cache lock poisoned");

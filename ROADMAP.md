@@ -19,7 +19,7 @@
 1. **Core Value Proposition**: A unified, high-performance cross-platform desktop gaming hub built on Tauri v2 (Rust + Svelte 5 + modular SCSS). Aggregates titles from across all major PC storefronts and emulation cores with automatic metadata cascade, high-resolution artwork caching, and privacy-first local persistence.
 2. **Design Principles**:
    - **Native App Isolation**: The application never writes to, modifies, or backs up external launcher proprietary files (`shortcuts.vdf`, `cloud-storage-namespace-1.json`, etc.). All data persists in our local SQLite database (`database.sqlite`) and in-memory serverless Redis-compatible KV tier (`mem_kv`).
-   - **Universal Core Plugins**: Core capabilities are structured as modular plugins (`platform-universal`, `metadata-universal`, `utility-title-normalizer`, `media-universal`, `utility-gamerpower`, `utility-storage`).
+   - **Universal Core Plugins (Rust-owned from v2.0.0)**: Core capabilities are structured as modular plugins (`platform-universal`, `metadata-universal`, `utility-title-normalizer`, `media-universal`, `utility-gamerpower`, `utility-storage`); their logic is consolidating into the Rust core behind a `StoreAdapter` trait, and the TS layer becomes render-only.
    - **Zero In-App Transactions**: Installations, updates, launches, and purchases delegate strictly to official storefront clients or system browsers.
    - **Obsidian Dark SCSS**: Aesthetic coherence with `#07111f` / `#0d1b2d` background, cyan (`#48d8f2`) and purple (`#b06cff`) accents, and authentic vector SVG platform icons (`<PlatformIcon />`).
 
@@ -35,31 +35,35 @@
 | **M12** | Manifest Schema & Script Standards | Tooling | ✅ Shipped | `v1.3.3` | Canonical `main:sub:option` script taxonomy, manifest schema 1.12.0 |
 | **M13** | Universal Plugins & Platform SVG Icons | Plugin system | ✅ Shipped | `v1.4.0` | Universal Core Plugins, Authentic Vector SVG icons, `⚙ Manage` modal |
 | **M14** | HELIX Gaming DB 3-Tier API & KV Cache | Metadata API | ✅ Shipped | `v1.4.1` | Three-tier REST client, serverless KV offline cache, hand-rolled purge |
-| **M15** | Cloud Gaming Hooks & Handheld Overlay | Handheld/Cloud | 🚀 Active | `v1.5.0` | Cloud streaming hooks (GeForce NOW, Xbox), Gamepad Big Picture mode |
-| **M16** | Emulator Auto-Configuration Presets | Emulation | ⏳ Planned | `v1.6.0` | Standalone emulator presets (RetroArch, Dolphin, PCSX2, RPCS3) |
+| **M15** | Rust-Owned Core Re-Architecture | Core & performance | 🚀 Active | `v2.0.0` | Rust single source of truth, storefront-neutral adapters, query-driven virtualized library, image pipeline, perf budgets, benchmark-gated shell decision |
+| **M16** | Cloud Gaming Hooks & Handheld Overlay | Handheld/Cloud | ⏳ Planned | `v2.1.0` | Cloud streaming hooks (GeForce NOW, Xbox), Gamepad Big Picture mode |
+| **M17** | Emulator Auto-Configuration Presets | Emulation | ⏳ Planned | `v2.2.0` | Standalone emulator presets (RetroArch, Dolphin, PCSX2, RPCS3) |
 
 ---
 
 ## 🚀 Active Milestones
 
-### [universal-game-launcher] — Milestone M15: Cloud Gaming, Handheld Mode & Large-Library Performance (v1.5.0)
+### [universal-game-launcher] — Milestone M15: Rust-Owned Core Re-Architecture (v2.0.0)
+
+> **Decision record (2026-10-21):** Framework shift evaluated. The clunkiness is architectural: business logic duplicated between Rust and TS, the full library shipped as one IPC payload, chatty KV IPC, a Steam-centric model, and monolith files. It is not caused by Tauri itself; the one framework-level weakness is WebKitGTK on Linux. Direction: stay on **Tauri v2 + Svelte 5** and rebuild the core first. The UI shell is decided by benchmark; a Chromium shell (Electron + Rust N-API core, Svelte UI kept) is the approved fallback if any OS misses the budgets.
 
 ```mermaid
 flowchart TD
-    M14_Done["M14 3-Tier API Delivered (v1.4.1)"] --> M15_Cloud["Cloud Gaming Streaming Hooks"]
-    M15_Cloud --> M15_Pad["Gamepad / Big Picture Overlay"]
-    M15_Pad --> M15_Perf["Large-Library SQLite Index Tuning"]
-    M15_Perf --> Gate["Zero-Warning Quality Gate & Release v1.5.0"]
+    M14_Done["M14 3-Tier API Delivered (v1.4.1)"] --> M15_Base["Perf baseline & budgets"]
+    M15_Base --> M15_Core["Rust single source of truth + StoreAdapter model"]
+    M15_Core --> M15_UI["Query-driven virtualized library + image pipeline"]
+    M15_UI --> Gate{"Budgets met on all 3 OSes?"}
+    Gate -- Yes --> Rel["Zero-Warning Gate & Release v2.0.0"]
+    Gate -- No --> Shell["Chromium-shell fallback spike"]
 ```
 
 #### Detailed Deliverables
 
-- 🎯 **[universal-game-launcher] Cloud Gaming & Streaming Hooks**:
-  - Direct URI launcher integrations for GeForce NOW, Xbox Cloud Gaming, and Moonlight/Sunshine.
-- 🎯 **[universal-game-launcher] Gamepad / Handheld Big Picture Mode**:
-  - Full controller navigation (D-pad, analog stick, bumper tabs) optimized for handheld PC gaming devices (Steam Deck, ROG Ally, Lenovo Legion Go).
-- 🎯 **[universal-game-launcher] Large-Library Performance Tuning**:
-  - Incremental SQLite index optimizations and virtualization for libraries exceeding 10,000 titles.
+- 🎯 **[universal-game-launcher] Dynamic Multi-Source Metadata Scraper & Dropping Hand-Rolled Catalogs**: Drop static/manual metadata lists and developer tables (`HAND_ROLLED_GAMES`, static `KNOWN_DEVELOPERS` catalog). Replace with a robust, automated multi-source scraper engine in Rust covering indie & non-Steam titles (itch.io, IndieDB, VNDB, PCGamingWiki Cargo API, Wikipedia/Wikidata, Steam Store & GOG Catalog) with automated field cascade and artwork retrieval.
+- 🎯 **[universal-game-launcher] Rust Single Source of Truth**: All scanning, metadata, normalization, filtering, and launch resolution live in Rust; TS becomes render-only with generated bindings.
+- 🎯 **[universal-game-launcher] Storefront-Neutral Model**: `Game` keyed by `(store, store_id)`; `StoreAdapter` trait for every storefront, launcher, and emulator; no Steam-account coupling.
+- 🎯 **[universal-game-launcher] Steam-Smooth UI**: SQLite FTS5 windowed queries, virtualized grid/list, Rust thumbnail cache over a custom protocol, streamed progress events.
+- 🎯 **[universal-game-launcher] Performance Budgets (CI-gated)**: cold start < 1.5 s, 60 fps at 10k games, search < 50 ms, idle-RAM target.
 
 ---
 

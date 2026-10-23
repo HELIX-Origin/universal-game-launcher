@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod backup;
+mod bench;
 mod cache;
 pub mod cli;
 mod commands;

@@ -38,7 +38,7 @@
 - **Status**: ⚠️ open
 - **Scope:** `src-tauri/src/` (launch command execution, environment variables, working directory) & `src/lib/plugins/platform-universal/`
 - **Symptom:** Attempting to launch certain games fails; the target executable or launcher process initiates but immediately crashes or terminates unexpectedly. Observed specifically with RuneScape and potentially impacting other titles with specialized startup parameters, multi-stage bootstrappers, or custom working directory dependencies.
-- **Notes**: Deferred for dedicated future debugging sprint per maintainer directive; logged for tracking.
+- **Notes**: Scheduled for W.57 §6 (Unified Launch Path via `StoreAdapter::launch_spec`, Jagex Launcher adapter) in the v2.0.0 core re-architecture.
 
 ---
 

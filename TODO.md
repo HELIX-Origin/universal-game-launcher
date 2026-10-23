@@ -17,7 +17,51 @@
 
 ## 🔥 Active Workstreams
 
-### 🎯 [universal-game-launcher] Workstream W.55: Cloud Gaming Streaming Hooks, Gamepad Handheld Mode & Performance Tuning
+### 🎯 [universal-game-launcher] Workstream W.57: Rust-Owned Core Re-Architecture & Performance Budgets (v2.0.0)
+- **Project Identifier:** `[universal-game-launcher]`
+- **Repository Path:** `projects/universal-game-launcher`
+- **Status:** 🚧 In progress (user directive 2026-10-21). Takes priority over W.55; absorbs the open W.56 launcher items and BUG-1.
+- **Target Component:** Rust core (`src-tauri/src/`) + Svelte UI (`src/`)
+
+**Locked user directives (normalized by domain):**
+- **Product goal**: A fast, modern unified library for every game and every storefront on Windows, macOS, and Linux that runs as smoothly as Steam while supporting every game possible.
+- **Launch model**: Games launch through their storefront's own client/launcher (protocol URI or official launcher executable), so the app never needs internal authorization or stored credentials.
+- **Framework decision (delegated to agent, recorded 2026-10-21)**: Stay on Tauri v2 + Svelte 5 and rebuild the core first. Decide the UI shell by benchmark. A Chromium shell (Electron + Rust N-API core, Svelte UI kept) is the approved fallback only if an OS misses the performance budgets after the core rework.
+- **Versioning**: The breaking data-model migration ships as `v2.0.0`.
+
+**Implementation checklist:**
+- [ ] **[universal-game-launcher] 1. Performance Baseline & Budgets**:
+  - [ ] `[universal-game-launcher]` 10k-game mock library seeder + benchmark script (cold start, scroll fps, search latency, idle RAM).
+  - [ ] `[universal-game-launcher]` Record the v1.4.1 baseline; codify budgets (cold start < 1.5 s, 60 fps at 10k, search < 50 ms, RAM target).
+- [ ] **[universal-game-launcher] 2. Storefront-Neutral Model & `StoreAdapter` Trait**:
+  - [ ] `[universal-game-launcher]` Define `StoreAdapter` (`detect`, `scan`, `launch_spec`, `install_uri`, `uninstall_uri`, `store_uri`); key `Game` by `(store, store_id)`.
+  - [ ] `[universal-game-launcher]` Port Steam, Epic, GOG, itch, Xbox, EA, Ubisoft, Battle.net, Amazon, Rockstar, emulation, and manual scanners onto the trait.
+  - [ ] `[universal-game-launcher]` Remove `accountId3` from library, collection, and filter APIs.
+  - [ ] `[universal-game-launcher]` v1 → v2 SQLite migration preserving favorites, custom names, overrides, collections, and playtime.
+- [ ] **[universal-game-launcher] 3. Query-Driven Library**:
+  - [ ] `[universal-game-launcher]` `query_library(filter, sort, offset, limit)` + `library_counts()` on SQLite FTS5 + covering indices.
+  - [ ] `[universal-game-launcher]` Replace the full `load_library → Game[]` payload in the UI.
+  - [ ] `[universal-game-launcher]` Stream scan/metadata progress over Tauri channels; remove per-key KV IPC (`redis.ts`) from UI hot paths.
+- [ ] **[universal-game-launcher] 4. Virtualized UI & Image Pipeline**:
+  - [ ] `[universal-game-launcher]` Virtualized sidebar list and library grid.
+  - [ ] `[universal-game-launcher]` Rust thumbnail cache served via a custom URI protocol (no base64/data URLs).
+  - [ ] `[universal-game-launcher]` Split `commands.rs`, `library/+page.svelte`, and `library.scss` into domain modules.
+- [ ] **[universal-game-launcher] 5. Dynamic Multi-Source Scraper & Drop Static Repositories**:
+  - [ ] `[universal-game-launcher]` Remove static hand-rolled games (`HAND_ROLLED_GAMES`) and hardcoded developer dictionary (`developers.rs`).
+  - [ ] `[universal-game-launcher]` Implement dynamic scrapers in Rust for non-Steam and indie titles (itch.io search/store scraping, IndieDB API/scraper, VNDB API v2, PCGamingWiki, Wikipedia/Wikidata).
+  - [ ] `[universal-game-launcher]` Automatic multi-source fallback cascade so indie and itch games have complete artwork (capsule, hero), developer, publisher, and genre coverage without manual intervention.
+- [ ] **[universal-game-launcher] 6. Single Source of Truth & Typed Bindings**:
+  - [ ] `[universal-game-launcher]` Delete the TS duplicates (plugin engine, universal metadata, developers, title normalizer, platform specs) once their Rust equivalents are wired.
+  - [ ] `[universal-game-launcher]` Generate TS bindings from Rust (`specta` / `tauri-specta`).
+- [ ] **[universal-game-launcher] 7. Unified Launch Path**:
+  - [ ] `[universal-game-launcher]` All launches resolve via `StoreAdapter::launch_spec`; implement the remaining W.56 launchers (Jagex, XIV Launcher, FFXIV official, GW2 official) and fix BUG-1.
+- [ ] **[universal-game-launcher] 8. Shell Gate & Release**:
+  - [ ] `[universal-game-launcher]` Re-benchmark on Windows, macOS, and Linux; run a time-boxed Chromium-shell spike if any OS fails.
+  - [ ] `[universal-game-launcher]` Zero-warning gate (`RUSTFLAGS="-D warnings" cargo check`, `cargo test`, `npm run check`) and release `v2.0.0`.
+
+---
+
+### 🎯 [universal-game-launcher] Workstream W.55: Cloud Gaming Streaming Hooks & Gamepad Handheld Mode (Queued — v2.1.0, after W.57)
 - **Project Identifier:** `[universal-game-launcher]`
 - **Repository Path:** `projects/universal-game-launcher`
 - **Target Component:** Core Launcher & UI
@@ -25,20 +69,16 @@
 ```mermaid
 flowchart TD
     W55_1["[universal-game-launcher] Cloud Provider Hooks"] --> W55_2["[universal-game-launcher] Controller Big Picture Mode"]
-    W55_2 --> W55_3["[universal-game-launcher] SQLite Index Optimization"]
 ```
 
 **Implementation checklist:**
 - [ ] **[universal-game-launcher] 1. Cloud Gaming URI Integration**:
-  - [ ] `[universal-game-launcher]` Implement launch handlers and URI schemes for GeForce NOW, Xbox Cloud Gaming, and Moonlight/Sunshine.
+  - [ ] `[universal-game-launcher]` Implement launch handlers and URI schemes for GeForce NOW, Xbox Cloud Gaming, and Moonlight/Sunshine (as `StoreAdapter` implementations).
   - [ ] `[universal-game-launcher]` Add cloud provider pills and status badges to library game cards.
 - [ ] **[universal-game-launcher] 2. Gamepad & Big Picture Overlay**:
   - [ ] `[universal-game-launcher]` Implement gamepad input driver supporting standard controllers (Xbox, DualShock/DualSense, Switch Pro).
   - [ ] `[universal-game-launcher]` Design full-screen Big Picture layout tailored for handheld displays (Steam Deck, ROG Ally, Legion Go).
-- [ ] **[universal-game-launcher] 3. Large-Library Performance & SQLite Optimization**:
-  - [ ] `[universal-game-launcher]` Benchmark SQLite queries on 10,000+ title libraries; implement covering indices on title, platform, and flags.
-  - [ ] `[universal-game-launcher]` Virtualize library card grid to maintain smooth 60fps scrolling on low-power APUs.
-- [ ] **[universal-game-launcher] 4. Quality Verification**:
+- [ ] **[universal-game-launcher] 3. Quality Verification**:
   - [ ] `[universal-game-launcher]` Verify zero errors and zero warnings across `npm run check` and `RUSTFLAGS="-D warnings" cargo check`.
 
 ---
@@ -46,7 +86,7 @@ flowchart TD
 ### [universal-game-launcher] Workstream W.56: Platform-Native Game Launching and Auto-Detected Launchers
 - **Project Identifier:** [universal-game-launcher]
 - **Repository Path:** projects/universal-game-launcher
-- **Status:** In progress (user directive 2026-10-21).
+- **Status:** In progress (user directive 2026-10-21). Remaining launcher items are delivered through W.57 §6 (`StoreAdapter::launch_spec`).
 - **Target Component:** Core Launcher (Rust) + Settings UI (Svelte)
 
 **Locked user directives (normalized by domain):**

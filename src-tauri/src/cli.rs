@@ -12,10 +12,12 @@
 //! - `universal-game-launcher --cli normalize-title "<title>"`
 //! - `universal-game-launcher --cli inspect-local "<exe_or_dir_path>"`
 //! - `universal-game-launcher --cli launchers`
+//! - `universal-game-launcher --cli bench [--games N] [--runs R]`
 //! - `universal-game-launcher --cli help`
 
 use std::path::Path;
 
+use crate::bench;
 use crate::metadata;
 use crate::platforms::{
     detect_all_launchers, normalize_game_title, scaffold_emulation_folders, scan_emulation_roms,
@@ -122,6 +124,23 @@ pub fn try_run_cli() -> bool {
                 println!("{json}");
             }
         }
+        "bench" => {
+            let flag = |name: &str, default: usize| {
+                sub_args
+                    .iter()
+                    .position(|a| a == name)
+                    .and_then(|i| sub_args.get(i + 1))
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(default)
+            };
+            let report = bench::run(
+                flag("--games", bench::DEFAULT_GAMES),
+                flag("--runs", bench::DEFAULT_RUNS),
+            );
+            if let Ok(json) = serde_json::to_string_pretty(&report) {
+                println!("{json}");
+            }
+        }
         _ => {
             println!(
                 "{}",
@@ -134,7 +153,8 @@ pub fn try_run_cli() -> bool {
                         "scaffold-roms <path>": "Scaffold EmulationStation system folders and systeminfo.txt files",
                         "normalize-title <title>": "Normalize a raw game or ROM title across all platforms",
                         "inspect-local <path>": "Extract local game engine and PE executable metadata without network access",
-                        "launchers": "Detect installed platform launchers across all mounted drives"
+                        "launchers": "Detect installed platform launchers across all mounted drives",
+                        "bench [--games N] [--runs R]": "Benchmark library hot paths on a synthetic library against performance budgets"
                     }
                 })
             );
