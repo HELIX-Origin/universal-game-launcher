@@ -1,7 +1,7 @@
 # HANDOFF.md — Universal Game Launcher Session Handoff
 
 **Last updated:** 2026-10-21
-**Current session status:** v1.4.1 stable · W.57 v2.0.0 Rust-Owned Core Re-Architecture opened (framework decision recorded) · implementation not yet started
+**Current session status:** v1.4.1 stable · W.54 v2.0.0 File Explorer Shell Extension & Lifecycle Management + Rebrand to Windows Game Explorer (framework decision recorded) · implementation not yet started
 **Project:** universal-game-launcher
 **Root:** projects/universal-game-launcher
 
@@ -12,22 +12,7 @@
 
 ---
 
-## 1) [universal-game-launcher] W.57: Rust-Owned Core Re-Architecture & Performance Budgets (Superceded in W.54, section needs to be cleaned up)
-- **State:** Framework evaluation complete; direction locked 2026-10-21 (decision delegated to the agent by the maintainer).
-- **Decision:** Stay on Tauri v2 + Svelte 5 and rebuild the core first. Decide the UI shell by benchmark; a Chromium shell (Electron + Rust N-API core, Svelte UI kept) is the approved fallback only if an OS misses the budgets. Ships as `v2.0.0`.
-- **Root causes identified:** business logic duplicated in Rust and TS (plugin engine, metadata, developers, title normalizer); full `Game[]` IPC payload; per-key KV IPC (`redis.ts`); Steam-centric `accountId3` model; monolith files (`commands.rs` 2,401 lines, `library/+page.svelte` 1,295, `library.scss` 1,742); WebKitGTK on Linux.
-- **Next tasks:** start W.57 §1 (10k mock seeder + benchmark baseline), then §2 (`StoreAdapter` trait + `(store, store_id)` model).
-- **Ledgers:** `TODO.md` (W.57), `PLAN.md` (Sprint 32), `ROADMAP.md` (M15)
-
-## 2) [universal-game-launcher] W.56: Platform-Native Launching (Superceded in W.54, section needs to be cleaned up)
-- **State:** Steam `steam.exe steam://run/{appid}` injection, launch reordering, and new settings fields delivered; remaining launchers and BUG-1 move to the unified `StoreAdapter::launch_spec` path.
-
-## 3) [universal-game-launcher] W.55: Cloud Gaming & Handheld Mode (Superceded in W.54, section needs to be cleaned up)
-- **State:** Deferred until after W.57; large-library performance items moved into W.57.
-
-## 4) [universal-game-launcher] W.53: Three-Tier REST Client & Serverless KV (Superceded in W.54, section needs to be cleaned up)
-
-## 5) [universal-game-launcher] W.54: File Explorer Shell Extension & Lifecycle Management + Rebrand to Windows Game Explorer (Active, v2.0.0)
+## 1) [universal-game-launcher] W.54: File Explorer Shell Extension & Lifecycle Management + Rebrand to Windows Game Explorer (Active, v2.0.0)
 
 ### Overview
 
