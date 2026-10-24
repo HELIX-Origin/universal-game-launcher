@@ -34,7 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - **Authentic Windows Games Icon**: Embedded 16-layer multi-resolution Windows `imageres.dll` #14 Games icon (`16x16` to `256x256` with full alpha transparency) across all three binaries.
   - **`GameExplorerConfig.exe`**: Standalone Win32 shell integration & layout configuration utility with dark/light mode styling and live Explorer notification.
   - **`GameExplorerManager.exe`**: Dedicated Win32 companion reviving the classic Game Explorer Manager (GEM) for adding custom local games, selecting cover art (including animated `.gif`s), and editing per-game metadata (`%USERPROFILE%\Game Explorer\metadata\<appId>.json`).
-  - **Native PowerShell Build, Test & Signing Suite**: Added `scripts/build.ps1`, `scripts/test.ps1`, and `scripts/sign.ps1` enforcing `/W4 /WX` zero-warning compilation and automated C++ unit testing (`GameExplorerTests.exe`).
+  - **Native PowerShell Build, Test, Packaging & Signing Suite**: Added `scripts/build.ps1`, `scripts/test.ps1`, `scripts/package.ps1`, `scripts/generate-installer-art.ps1`, and `scripts/sign.ps1` enforcing `/W4 /WX` zero-warning compilation and automated C++ unit testing (`GameExplorerTests.exe`).
+  - **Dual-Mode NSIS Windows Installer (`installer/windows-game-explorer.nsi`)**: Single-file setup installer (`windows-game-explorer-v2.0.0-setup.exe`) supporting both Per-User (default, no UAC required) and All Users installation, automated COM shell extension registration/unregistration (`regsvr32.exe`), Start Menu shortcuts, Add/Remove Programs integration, and custom ImageMagick-generated sidebar & header branding bitmaps.
 
 ### Changed
 - Re-architected and rebranded the repository to **Windows Game Explorer** (`v2.0.0`), replacing the legacy Tauri v2 / Rust / SvelteKit desktop application with a pure native C++20 Win32 Shell Namespace Extension and companion suite.

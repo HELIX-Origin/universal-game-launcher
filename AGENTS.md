@@ -22,6 +22,7 @@ high-resolution box art, rich properties, and automated multi-store discovery. M
 |---|---|
 | `pwsh -NoProfile -File scripts/build.ps1 -Configuration Release` | Native C++20 compilation with `/W4 /WX` (warnings as errors) |
 | `pwsh -NoProfile -File scripts/test.ps1 -Configuration Release` | Run native C++ unit and integration test suite (`GameExplorerTests.exe`, 10/10 tests) |
+| `pwsh -NoProfile -File scripts/package.ps1 -Configuration Release` | Package portable ZIP and compile dual-mode NSIS installer (`dist/`) |
 | `regsvr32 build\Release\GameExplorerShell.dll` | Register COM virtual shell namespace extension |
 | `regsvr32 /u build\Release\GameExplorerShell.dll` | Unregister COM virtual shell namespace extension |
 

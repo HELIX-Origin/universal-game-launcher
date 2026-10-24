@@ -173,12 +173,12 @@ HRESULT RegisterServer(HMODULE hModule) {
     SetRegistryValue(HKEY_LOCAL_MACHINE, folderDescKey, L"ParsingName", std::wstring(L"::") + SZ_CLSID_GAME_EXPLORER);
     SetRegistryValue(HKEY_LOCAL_MACHINE, folderDescKey, L"FolderTypeID", SZ_FOLDERTYPEID_GAMES);
 
-    // Copy on-disk game-explorer.ico to library folder for external shell queries
+    // Copy on-disk game-explorer-icon.ico to library folder for external shell queries
     const fs::path libDir = Storage::GetUserRootPath();
     std::error_code ec;
     fs::create_directories(libDir, ec);
     const fs::path moduleDir = fs::path(modulePath).parent_path();
-    const fs::path localIco = libDir / L"game-explorer.ico";
+    const fs::path localIco = libDir / L"game-explorer-icon.ico";
     const fs::path builtIco = moduleDir / L"Resource.ico";
     if (fs::exists(builtIco)) {
         fs::copy_file(builtIco, localIco, fs::copy_options::overwrite_existing, ec);

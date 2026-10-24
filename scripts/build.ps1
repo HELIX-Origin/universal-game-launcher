@@ -44,11 +44,12 @@ Get-Process -Name "GameExplorerConfig","GameExplorerManager" -ErrorAction Silent
 $OutConfigurationDir = Join-Path $BuildDir $Configuration
 $LockedDll = Join-Path $OutConfigurationDir "GameExplorerShell.dll"
 if (Test-Path -LiteralPath $LockedDll) {
-    Remove-Item -LiteralPath "$LockedDll.old" -Force -ErrorAction SilentlyContinue
+    $randomOld = "$LockedDll.$([guid]::NewGuid().ToString('N')).old"
     try {
-        Move-Item -LiteralPath $LockedDll -Destination "$LockedDll.old" -Force -ErrorAction Stop
+        Move-Item -LiteralPath $LockedDll -Destination $randomOld -Force -ErrorAction Stop
     } catch {
-        Write-Verbose "Could not move ${LockedDll}: $_"
+        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 1500
     }
 }
 

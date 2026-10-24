@@ -13,6 +13,7 @@ Thumbs.db
 # CMake & Native C++ Build Artifacts
 /build
 /out
+/dist
 *.obj
 *.pdb
 *.ilk
