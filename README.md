@@ -13,6 +13,10 @@
 
 Organize, browse, and launch your entire multi-platform game library with high-resolution box art, rich preview pane, and automated storefront detection without scraping or credentials.
 
+<br />
+
+<img src="./assets/preview.png" alt="Windows Game Explorer Preview" width="100%" />
+
 </div>
 
 ---
