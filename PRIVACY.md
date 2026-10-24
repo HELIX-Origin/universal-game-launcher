@@ -2,11 +2,11 @@
 
 **Windows Game Explorer** is committed to protecting your privacy. This policy explains what data the application touches, where it goes, and how it is stored.
 
-## 🔒 Summary: 100% Local-Only, Zero Telemetry, Zero External Scrapers
+## 🔒 Summary: Local-First, Zero Telemetry, Zero Third-Party Scrapers
 
 - **No telemetry**: Windows Game Explorer contains zero user analytics, diagnostic trackers, or remote telemetry.
-- **No external metadata scrapers**: Windows Game Explorer does not transmit your game library to third-party scraping services. It reads metadata and box art directly from the storefront manifests already installed on your local drives.
-- **Local persistence**: Your library settings and per-game metadata overrides (`%USERPROFILE%\Game Explorer\metadata\<appId>.json`) are stored exclusively on your device.
+- **No third-party metadata scrapers**: Windows Game Explorer does not transmit your game library to external scraping services (such as IGDB, SteamGridDB, or VNDB). It reads metadata and box art directly from the storefront manifests installed on your local drives, and performs keyless read-only metadata lookups to the official Steam Store API (`store.steampowered.com/api/appdetails`) and storefront artwork CDNs (`cdn.cloudflare.steamstatic.com`, `img.itch.zone`) only when a local game is missing synopsis, developer, or cover art.
+- **Local persistence**: Your library settings, cached artwork (`%USERPROFILE%\Game Explorer\cache\art\`), and per-game metadata overrides (`%USERPROFILE%\Game Explorer\metadata\<appId>.json`) are stored exclusively on your device.
 - **No HELIX servers**: We run no central servers that log your gaming habits, installed games, or IP address.
 
 ## 🛑 Third-Party Store Isolation

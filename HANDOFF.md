@@ -1,7 +1,7 @@
 # HANDOFF.md — Windows Game Explorer Session Handoff
 
-**Last updated:** 2026-10-23
-**Current session status:** W.54 active · Windows Game Explorer Rebrand & Two-Section Shell Categorization Completed · Syncing Progress to Remote Branch
+**Last updated:** 2026-10-24
+**Current session status:** W.54 completed · `v2.0.0` Official Release Published
 **Project:** windows-game-explorer (Windows Game Explorer)
 **Root:** projects/windows-game-explorer
 
@@ -12,51 +12,32 @@
 
 ---
 
-## 1) [windows-game-explorer] W.54: Windows Game Explorer Shell Extension & Lifecycle Management (Active, v2.0.0)
+## 1) [windows-game-explorer] W.54: Windows Game Explorer v2.0.0 Architecture & Release (Completed, v2.0.0)
 
 ### Authentic Windows Game Explorer Architecture (Windows 7 Revival)
 The project's definitive vision is recreating the classic **Windows 7/Vista Game Explorer** (`shell:Games`, `FOLDERTYPEID_Games`) inside Windows 11 through a triple-component native C++20 architecture:
 - **`GameExplorerShell.dll` (In-Shell Primary Extension)**:
   - **Two-Section Categorization**: Uses `ICategoryProvider` and `ICategorizer` (`PKEY_ItemTypeText`) to display two collapsible groups inside File Explorer:
-    1. `▾ Game Providers (N)`: Installed storefront clients (Steam, Epic Games, GOG GALAXY, Battle.net, Ubisoft Connect, EA App, itch.io).
-    2. `▾ Games (N)`: Installed game titles with vertical ~2:3 box art (`IThumbnailProvider` / `IShellItemImageFactory`) and rich properties (`IPropertyStore`).
-  - **Storefront-First Discovery (No External Scrapers)**: Automatically discovers installed titles and harvests metadata/box art directly from installed storefronts on disk without third-party scrapers (IGDB, SteamGridDB, VNDB).
+    1. `▾ Game Providers (N)`: Installed storefront clients across 17 supported platforms.
+    2. `▾ Games (N)`: Installed game titles with vertical ~2:3 box art (`IThumbnailProvider` / `IShellItemImageFactory`) and rich properties (`IPropertyStore`: Title, Platform, Developer, Publisher, Release Year, Genre, Description, Install Path).
+  - **Real-Time Installation & Metadata Refresh**: Automatically detects newly installed or uninstalled games across storefronts via `ComputeEnvironmentStateHash` (`WM_TIMER`), `SHChangeNotifyRegister` (`WM_APP + 43`), and inter-process `WM_APP + 42` broadcasts from `GameExplorerManager.exe` and `GameExplorerConfig.exe`.
 - **`GameExplorerConfig.exe` (Integration Configuration Utility)**:
-  - Dedicated strictly to configuring the shell integration (enable/disable namespace registration, layout mode preference, storefront integration toggles, and OneDrive cloud sync).
+  - Native Windows 11 Settings-inspired Win32 GUI with Sidebar Navigation (`Shell Integration`, `Game Providers`, `Cloud Sync & Backup`), custom pill toggle switches, and 17 storefront integration toggles.
 - **`GameExplorerManager.exe` (Game Explorer Manager GUI)**:
-  - Separate Win32 GUI application alongside `GameExplorerConfig.exe`, reviving the classic Game Explorer Manager (GEM) utility for managing the games in the library, adding local/custom games (`.exe`, `.lnk`, `.bat`, ROMs), picking box art/icons, and editing game metadata (`%USERPROFILE%\Game Explorer\metadata\<appId>.json`).
-
-### Delivered in This Session
-
-1. **Complete Project Rebranding (`windows-game-explorer` / `Windows Game Explorer`)**:
-   - Renamed local project directory from `projects/universal-game-launcher` to `projects/windows-game-explorer`.
-   - Renamed global skill `.agents/skills/universal-game-launcher.md` to `.agents/skills/windows-game-explorer.md`.
-   - Updated `CMakeLists.txt` (`project(WindowsGameExplorer VERSION 2.0.0 ...)`), community-health files, tracking ledgers, and agent playbooks to eliminate legacy `universal-game-launcher` and Tauri v2 references.
-   - Deleted obsolete legacy Tauri v2 `.mjs` scripts, assets, and log files.
-
-2. **Two-Section Native Shell Categorization (`ICategoryProvider` & `ICategorizer`)**:
-   - Implemented `GameCategoryProvider` and `GameCategorizer` (`src/shell/CategoryProvider.cpp`) grouping items by `PKEY_ItemTypeText` into `▾ Game Providers` (`Category 0`) and `▾ Games` (`Category 1`).
-   - Updated `ShellFolder::EnumObjects` (`src/shell/ShellFolder.cpp`) to discover installed storefront providers (`itemKind = 0`) followed by installed games (`itemKind = 1`).
-   - Wired `GameFolderViewCB` (`SFVM_SETISFV`) to invoke `IFolderView2::SetGroupBy(PKEY_ItemTypeText, TRUE)` and configured `FOLDERTYPEID_Games` in `Registration.cpp`.
-   - Added `ProviderContextMenu` and updated `GameItemUI` (`IThumbnailProvider`, `IShellItemImageFactory`, `IPropertyStore`, `IExtractIconW`) to support both storefront providers and games.
-   - Updated `StorefrontScanner::LoadPerGameMetadata` to apply user overrides saved in `%USERPROFILE%\Game Explorer\metadata\<appId>.json`.
+  - Split-view Win32 GUI utility (`CreateFontIndirectW` DPI-scaled `Segoe UI Variable`, owner-drawn 2:3 cover art list view, right-side inspector with `Gdiplus::Image` preview and multi-frame animated GIF timer playback, persistent user metadata overrides in `%USERPROFILE%\Game Explorer\metadata\<appId>.json`, and custom game `.exe`/`.lnk`/`.bat` registration).
 
 ---
 
 ## 2) Active Build & Test Verification
 
 - **Compiler**: MSVC 19.51 / CMake 4.3.1 (Visual Studio 2026 BuildTools)
-- **Compilation Gate**: `/W4 /WX /permissive- /utf-8` enforced across all targets (`sqlite3`, `GameExplorerCore`, `GameExplorerConfig`, `GameExplorerShell`, `GameExplorerTests`).
+- **Compilation Gate**: `/W4 /WX /permissive- /utf-8` enforced across all targets (`sqlite3`, `GameExplorerCore`, `GameExplorerConfig`, `GameExplorerManager`, `GameExplorerShell`, `GameExplorerTests`).
 - **Result**: 0 compiler warnings, 0 linker warnings, 0 errors.
-- **Unit Tests**: `GameExplorerTests.exe` -> 9/9 passed.
+- **Unit Tests**: `GameExplorerTests.exe` -> 10/10 passed (`pwsh -NoProfile -File scripts/test.ps1 -Configuration Release`).
 
 ---
 
 ## 3) Next Immediate Priorities
 
-1. **Sync Current Progress to Upstream & Rename Repository**:
-   - Commit and push current state to upstream via a new branch (`v2.0-windows-game-explorer`) without creating a release yet.
-   - Rename upstream GitHub repository to `windows-game-explorer` and update local git remote URL.
-2. **Finish `GameExplorerConfig.exe` Cleanup & Implement `GameExplorerManager.exe`**:
-   - Strip legacy external scraper API key inputs from `GameExplorerConfig.exe` (`src/config/ConfigMain.cpp`).
-   - Implement `GameExplorerManager.exe` (`src/manager/ManagerMain.cpp`) as a separate Win32 GUI application for managing library games and adding local games.
+1. **Post-v2.0.0 Maintenance**:
+   - Monitor user feedback on `v2.0.0` storefront discovery and Windows 11 File Explorer shell integration.

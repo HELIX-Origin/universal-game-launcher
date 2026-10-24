@@ -4,7 +4,7 @@ Looking for help with **Windows Game Explorer**? Here is where to go.
 
 ## 📖 Documentation
 
-- 📖 **Repository Documentation**: See [`README.md`](./README.md) and [`docs/`](./docs/) for build instructions, architecture details, and per-game metadata customization guides.
+- 📖 **Repository Documentation**: See [`README.md`](./README.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md) for build instructions, architecture details, and per-game metadata customization guides.
 
 ## 💬 Community
 

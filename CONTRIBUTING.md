@@ -26,7 +26,7 @@ Windows Game Explorer is a native C++20 Win32 application suite and Windows File
 
 - 🐛 **Report bugs** via [GitHub Issues](https://github.com/HELIX-Origin/windows-game-explorer/issues) (bug form).
 - ✨ **Propose features** via [GitHub Issues](https://github.com/HELIX-Origin/windows-game-explorer/issues) (feature form).
-- 📝 **Improve documentation** in the repository's `docs/` directory.
+- 📝 **Improve documentation** in the repository's root Markdown guides.
 - 🔧 **Submit code** via pull request.
 - 👀 **Review pull requests** from other contributors.
 

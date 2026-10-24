@@ -126,8 +126,9 @@ HRESULT RegisterServer(HMODULE hModule) {
     const std::wstring nsKey = std::wstring(L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Desktop\\NameSpace\\") + SZ_CLSID_GAME_EXPLORER;
     SetRegistryValue(HKEY_CURRENT_USER, nsKey, L"", SZ_GAME_EXPLORER_TITLE);
 
-    // 3. Register under Explorer HideDesktopIcons
-    SetRegistryDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel", SZ_CLSID_GAME_EXPLORER, 0);
+    // 3. Always hide from the Desktop surface (1 = hidden on Desktop, visible only in File Explorer Navigation Pane like Home & Gallery)
+    SetRegistryDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel", SZ_CLSID_GAME_EXPLORER, 1);
+    SetRegistryDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\ClassicStartMenu", SZ_CLSID_GAME_EXPLORER, 1);
 
     // 4. Try HKLM registration if elevated
     SetRegistryValue(HKEY_LOCAL_MACHINE, clsidKey, L"", SZ_GAME_EXPLORER_TITLE);
@@ -140,6 +141,8 @@ HRESULT RegisterServer(HMODULE hModule) {
     SetRegistryDword(HKEY_LOCAL_MACHINE, shellFolderKey, L"Attributes", sfgaoAttributes);
     SetRegistryDword(HKEY_LOCAL_MACHINE, shellFolderKey, L"FolderValueFlags", 0x28);
     SetRegistryValue(HKEY_LOCAL_MACHINE, nsKey, L"", SZ_GAME_EXPLORER_TITLE);
+    SetRegistryDword(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel", SZ_CLSID_GAME_EXPLORER, 1);
+    SetRegistryDword(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\ClassicStartMenu", SZ_CLSID_GAME_EXPLORER, 1);
 
     // Register CLSID_GameCategorizer in HKLM
     SetRegistryValue(HKEY_LOCAL_MACHINE, catClsidKey, L"", L"Game Explorer Categorizer");
@@ -216,6 +219,8 @@ HRESULT UnregisterServer() {
     DeleteRegistryKeyRecursive(HKEY_CURRENT_USER, ftKey);
     DeleteRegistryKeyRecursive(HKEY_CURRENT_USER, nsKey);
     DeleteRegistryKeyRecursive(HKEY_CURRENT_USER, folderDescKey);
+    DeleteRegistryValue(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel", SZ_CLSID_GAME_EXPLORER);
+    DeleteRegistryValue(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\ClassicStartMenu", SZ_CLSID_GAME_EXPLORER);
     DeleteRegistryValue(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"GameExplorerAgent");
 
     // Delete HKLM registrations
@@ -224,6 +229,8 @@ HRESULT UnregisterServer() {
     DeleteRegistryKeyRecursive(HKEY_LOCAL_MACHINE, ftKey);
     DeleteRegistryKeyRecursive(HKEY_LOCAL_MACHINE, nsKey);
     DeleteRegistryKeyRecursive(HKEY_LOCAL_MACHINE, folderDescKey);
+    DeleteRegistryValue(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel", SZ_CLSID_GAME_EXPLORER);
+    DeleteRegistryValue(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\ClassicStartMenu", SZ_CLSID_GAME_EXPLORER);
 
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return S_OK;

@@ -34,7 +34,7 @@
 
 | # | Milestone | Scope | Status | Version / Target | Focus |
 |---|---|---|---|---|---|
-| **M15** | Windows Game Explorer Shell Extension & Native Re-Architecture | Shell extension & Win32 apps | 🚀 Active | `v2.0.0` | Native C++20 Win32 COM virtual namespace extension (`GameExplorerShell.dll`), two-section categorization (`Game Providers` & `Games`), multi-store scanner, `GameExplorerConfig.exe`, and `GameExplorerManager.exe` |
+| **M15** | Windows Game Explorer Shell Extension & Native Re-Architecture | Shell extension & Win32 apps | ✅ Released | `v2.0.0` | Native C++20 Win32 COM virtual namespace extension (`GameExplorerShell.dll`), two-section categorization (`Installed Providers` & `Games Library`), 17-platform scanner, `GameExplorerConfig.exe`, and `GameExplorerManager.exe` |
 | **M16** | Cloud Gaming Hooks & Handheld Overlay | Handheld/Cloud | ⏳ Planned | `v2.1.0` | Cloud streaming hooks (GeForce NOW, Xbox Cloud), Gamepad Big Picture mode |
 | **M17** | Emulator Auto-Configuration Presets | Emulation | ⏳ Planned | `v2.2.0` | Standalone emulator presets (RetroArch, Dolphin, PCSX2, RPCS3) |
 

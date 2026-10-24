@@ -24,24 +24,13 @@
 
 ## ⚠️ Active & Open Bugs
 
-### [windows-game-explorer] BUG-1 — File Explorer 0xc00000fd Stack Overflow Crash on Games Navigation & Generic Shortcuts Reversion
-- **Project Identifier:** `[windows-game-explorer]`
-- **Repository Path:** `projects/windows-game-explorer`
-- **Severity**: 🔴 Critical (explorer.exe stack overflow crash & view degradation)
-- **Status**: 🚧 fix applied / verifying (two-section `ICategoryProvider`/`ICategorizer`, `IThumbnailProvider`, `IPropertyStore`, and `FOLDERTYPEID_Games` wired)
-- **Scope:** `src/shell/ShellFolder.cpp`, `src/shell/CategoryProvider.cpp`, `src/shell/GameItemUI.cpp`, `src/shell/Registration.cpp`
-- **Symptom:** Clicking the "Games" item in the Windows 11 File Explorer navigation pane previously triggered an `0xc00000fd` (`STATUS_STACK_OVERFLOW`) in `ntdll.dll`, and vanilla `SHCreateShellFolderView` (`CDefView`) without categorization degraded the view into a generic shortcuts folder.
-- **Root Cause Analysis**:
-  1. On modern Windows 11 (Build 22000–26100+), File Explorer uses WinUI 3 XAML Islands (`DesktopWindowXamlSource`) with tabbed navigation frames.
-  2. Legacy `IShellView` implementations triggered recursive activation ping-pong loops (`UIActivate` <-> `OnViewWindowActive` <-> `SetFocus`) and synchronous WIC decoding on the STA thread.
-  3. Default `CDefView` without `ICategoryProvider`, `IThumbnailProvider`, and `IPropertyStore` did not provide the authentic two-section Game Explorer layout (`▾ Game Providers` and `▾ Games`) or vertical box art.
-- **Applied Fix**:
-  1. Registered `FOLDERTYPEID_Games` (`{b689b0d0-76d3-4cbb-87f7-585d0e0ce070}`) with `GroupBy = System.ItemTypeText` and `LogicalViewMode = 3`.
-  2. Implemented `GameCategoryProvider` (`ICategoryProvider`) and `GameCategorizer` (`ICategorizer`) grouping items into `▾ Game Providers` (`itemKind = 0`) and `▾ Games` (`itemKind = 1`).
-  3. Implemented `IThumbnailProvider`, `IShellItemImageFactory`, and `IPropertyStore` on `GameItemUI` to render vertical ~2:3 box art for games and storefront client icons for providers.
+*No open bugs.*
 
 ---
 
 ## ✅ Resolved Bugs & Historical Fixes
 
+- ✅ **[windows-game-explorer] BUG-1 — File Explorer 0xc00000fd Stack Overflow Crash on Games Navigation & Generic Shortcuts Reversion**: Resolved in `v2.0.0` via in-process WinUI XAML Island (`DesktopWindowXamlSource`), two-section categorization (`▾ Installed Providers` and `▾ Games Library`), `IThumbnailProvider`, `IShellItemImageFactory`, and `IPropertyStore`.
+- ✅ **[windows-game-explorer] BUG-2 — Duplicate Steam Entries, Missing Itch.io Cover Art, and Manager Metadata Override Persistence**: Resolved in `v2.0.0` by unescaping VDF double backslashes, normalizing drive root separators, preserving `.gif`/`.png`/`.jpg`/`.webp` artwork, calling `LoadPerGameMetadata` prior to saving in all scanners, and broadcasting `WM_APP + 42` refresh messages to open File Explorer views.
+- ✅ **[windows-game-explorer] BUG-3 — Desktop Namespace Icon Opening Legacy Windows 10 Ribbon Explorer UI Without Tabs**: Resolved in `v2.0.0` by setting `HideDesktopIcons\NewStartPanel` and `HideDesktopIcons\ClassicStartMenu` to `1` in `Registration.cpp` (matching Windows 11's native `Home` and `Gallery` pinned navigation items) so the redundant Desktop icon is removed and File Explorer always uses Windows 11's native Tabbed UI.
 - *Legacy Tauri v2 issues pruned following the v2.0.0 Native C++20 Windows Game Explorer re-architecture.*
