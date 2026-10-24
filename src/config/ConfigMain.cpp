@@ -198,6 +198,15 @@ void LoadConfigValues() {
     UpdateIntegrationStatusUI();
 }
 
+BOOL CALLBACK BroadcastRefreshToShellViews(HWND hwnd, LPARAM lParam) {
+    wchar_t cls[128] = { 0 };
+    if (GetClassNameW(hwnd, cls, 128) > 0 && wcscmp(cls, L"GameExplorerNativeView") == 0) {
+        PostMessageW(hwnd, WM_APP + 42, 0, 0);
+    }
+    EnumChildWindows(hwnd, BroadcastRefreshToShellViews, lParam);
+    return TRUE;
+}
+
 void SaveConfigValues(HWND hwndParent) {
     AppSettings s = SettingsManager::Load();
 
@@ -213,6 +222,7 @@ void SaveConfigValues(HWND hwndParent) {
 
     if (SettingsManager::Save(s)) {
         SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, Storage::GetUserRootPath().c_str(), nullptr);
+        EnumWindows(BroadcastRefreshToShellViews, 0);
         MessageBoxW(hwndParent, L"Integration settings successfully saved to Windows Game Explorer.", L"Windows Game Explorer", MB_OK | MB_ICONINFORMATION);
     } else {
         MessageBoxW(hwndParent, L"Failed to save settings. Please ensure write access.", L"Error", MB_OK | MB_ICONERROR);

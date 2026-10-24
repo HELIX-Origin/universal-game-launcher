@@ -336,6 +336,79 @@ void ShellView::LaunchCompanionExe(const wchar_t* exeName, const std::wstring& a
     }
 }
 
+uint64_t ShellView::ComputeEnvironmentStateHash() const {
+    uint64_t hash = 14695981039346656037ULL;
+    auto mix = [&](uint64_t v) {
+        hash ^= v;
+        hash *= 1099511628211ULL;
+    };
+
+    auto hashDirectoryState = [&](const fs::path& dir, const wchar_t* extFilter = nullptr) {
+        std::error_code ec;
+        if (!fs::exists(dir, ec)) return;
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (extFilter != nullptr && entry.path().extension() != extFilter) continue;
+            for (const wchar_t ch : entry.path().filename().wstring()) {
+                mix(static_cast<uint64_t>(ch));
+            }
+            const auto ftime = entry.last_write_time(ec).time_since_epoch().count();
+            mix(static_cast<uint64_t>(ftime));
+        }
+    };
+
+    // 1. Metadata overrides directory (%USERPROFILE%\Game Explorer\metadata)
+    hashDirectoryState(Storage::GetMetadataPath(), L".json");
+
+    // 2. Steam library folders (appmanifest_*.acf)
+    const std::wstring steamExe = PlatformLauncher::GetSteamExecutablePath();
+    if (!steamExe.empty()) {
+        const std::wstring steamRoot = fs::path(steamExe).parent_path().wstring();
+        for (const auto& lib : StorefrontScanner::GetSteamLibraryFolders(steamRoot)) {
+            hashDirectoryState(fs::path(lib) / L"steamapps", L".acf");
+        }
+    }
+
+    // 3. Epic Games manifests
+    wchar_t progData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"PROGRAMDATA", progData, MAX_PATH) > 0) {
+        hashDirectoryState(fs::path(progData) / L"Epic" / L"EpicGamesLauncher" / L"Data" / L"Manifests", L".item");
+    }
+
+    // 4. Itch.io butler.db timestamp
+    wchar_t appData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"APPDATA", appData, MAX_PATH) > 0) {
+        std::error_code ec;
+        const fs::path butlerDb = fs::path(appData) / L"itch" / L"db" / L"butler.db";
+        if (fs::exists(butlerDb, ec)) {
+            mix(static_cast<uint64_t>(fs::last_write_time(butlerDb, ec).time_since_epoch().count()));
+        }
+        const fs::path bDbWal = fs::path(appData) / L"itch" / L"db" / L"butler.db-wal";
+        if (fs::exists(bDbWal, ec)) {
+            mix(static_cast<uint64_t>(fs::last_write_time(bDbWal, ec).time_since_epoch().count()));
+        }
+    }
+
+    // 5. Mounted drives XboxGames / Games directories
+    for (const auto& drive : StorefrontScanner::GetAllMountedDrives()) {
+        hashDirectoryState(fs::path(drive) / L"XboxGames");
+        hashDirectoryState(fs::path(drive) / L"Games" / L"XboxGames");
+        hashDirectoryState(fs::path(drive) / L"Games" / L"EA Games");
+        hashDirectoryState(fs::path(drive) / L"Games" / L"Ubisoft");
+        hashDirectoryState(fs::path(drive) / L"Games" / L"Battle.net");
+    }
+
+    // 6. Count of AppModel\Repository\Packages (Xbox / Microsoft Store games)
+    HKEY hPkgs = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages", 0, KEY_READ, &hPkgs) == ERROR_SUCCESS) {
+        DWORD subKeys = 0;
+        RegQueryInfoKeyW(hPkgs, nullptr, nullptr, nullptr, &subKeys, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        mix(static_cast<uint64_t>(subKeys));
+        RegCloseKey(hPkgs);
+    }
+
+    return hash;
+}
+
 void ShellView::SwitchLayoutMode(LayoutMode mode) {
     m_layoutMode = mode;
     SettingsManager::SetLayoutMode(mode);
@@ -1196,7 +1269,28 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
         m_xaml->xamlSource.Content(m_xaml->rootGrid);
 
         RefreshData();
+        m_lastStateHash = ComputeEnvironmentStateHash();
         BuildXamlViewport();
+
+        // Register for live filesystem notifications on %USERPROFILE%\Game Explorer
+        PIDLIST_ABSOLUTE pidlWatch = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(Storage::GetUserRootPath().c_str(), nullptr, &pidlWatch, 0, nullptr)) && pidlWatch != nullptr) {
+            SHChangeNotifyEntry entry{};
+            entry.pidl = pidlWatch;
+            entry.fRecursive = TRUE;
+            m_shChangeNotifyId = SHChangeNotifyRegister(
+                m_hwndView,
+                SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
+                SHCNE_UPDATEDIR | SHCNE_CREATE | SHCNE_DELETE | SHCNE_UPDATEITEM | SHCNE_RENAMEITEM,
+                WM_APP + 43,
+                1,
+                &entry
+            );
+            CoTaskMemFree(pidlWatch);
+        }
+
+        // Start lightweight background timer (every 5 seconds) to auto-detect newly installed games across all storefronts
+        SetTimer(m_hwndView, 1001, 5000, nullptr);
     } catch (...) {
         // Fallback safety if XAML initialization encounters an exception
     }
@@ -1208,6 +1302,14 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
 IFACEMETHODIMP ShellView::DestroyViewWindow() {
     if (m_uState != SVUIA_DEACTIVATE) {
         UIActivate(SVUIA_DEACTIVATE);
+    }
+
+    if (m_hwndView != nullptr) {
+        KillTimer(m_hwndView, 1001);
+    }
+    if (m_shChangeNotifyId != 0) {
+        SHChangeNotifyDeregister(m_shChangeNotifyId);
+        m_shChangeNotifyId = 0;
     }
 
     if (m_xaml) {
@@ -1309,6 +1411,23 @@ LRESULT CALLBACK ShellView::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
         case WM_SETTINGCHANGE: {
             if (lParam != 0 && wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0) {
                 pThis->Refresh();
+            }
+            break;
+        }
+        case WM_APP + 42:
+        case WM_APP + 43: {
+            pThis->Refresh();
+            pThis->m_lastStateHash = pThis->ComputeEnvironmentStateHash();
+            return 0;
+        }
+        case WM_TIMER: {
+            if (wParam == 1001) {
+                const uint64_t curHash = pThis->ComputeEnvironmentStateHash();
+                if (curHash != pThis->m_lastStateHash) {
+                    pThis->m_lastStateHash = curHash;
+                    pThis->Refresh();
+                }
+                return 0;
             }
             break;
         }

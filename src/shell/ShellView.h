@@ -68,6 +68,7 @@ private:
     void RebuildSidepane();
     void SwitchLayoutMode(LayoutMode mode);
     void LaunchCompanionExe(const wchar_t* exeName, const std::wstring& args = L"");
+    uint64_t ComputeEnvironmentStateHash() const;
 
     std::atomic<ULONG> m_refCount{ 1 };
     ShellFolder* m_pFolder{ nullptr };
@@ -75,6 +76,8 @@ private:
 
     HWND m_hwndView{ nullptr };
     HWND m_hwndXamlIsland{ nullptr };
+    ULONG m_shChangeNotifyId{ 0 };
+    uint64_t m_lastStateHash{ 0 };
     std::unique_ptr<XamlState> m_xaml;
 
     FOLDERSETTINGS m_folderSettings{};

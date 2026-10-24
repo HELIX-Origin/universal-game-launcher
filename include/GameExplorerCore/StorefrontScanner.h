@@ -47,11 +47,11 @@ public:
     // Utility & filtering helpers
     static bool IsBlacklistedExecutable(const std::wstring& filename);
 
-    // Drive utilities
+    // Drive & library utilities
     static std::vector<std::wstring> GetAllMountedDrives();
+    static std::vector<std::wstring> GetSteamLibraryFolders(const std::wstring& steamPath);
 
 private:
-    static std::vector<std::wstring> GetSteamLibraryFolders(const std::wstring& steamPath);
     static void DiscoverSteamGridArtwork(
         const std::wstring& steamPath,
         const std::wstring& appId,

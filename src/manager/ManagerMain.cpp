@@ -204,6 +204,15 @@ std::wstring ReadEditString(HWND hEdit) {
     return str;
 }
 
+BOOL CALLBACK BroadcastRefreshToShellViews(HWND hwnd, LPARAM lParam) {
+    wchar_t cls[128] = { 0 };
+    if (GetClassNameW(hwnd, cls, 128) > 0 && wcscmp(cls, L"GameExplorerNativeView") == 0) {
+        PostMessageW(hwnd, WM_APP + 42, 0, 0);
+    }
+    EnumChildWindows(hwnd, BroadcastRefreshToShellViews, lParam);
+    return TRUE;
+}
+
 void SaveCurrentGameEdits(HWND hwnd) {
     if (g_selectedIndex < 0 || static_cast<size_t>(g_selectedIndex) >= g_games.size()) {
         MessageBoxW(hwnd, L"Please select a game from the library list or add a local game first.", L"Game Explorer Manager", MB_OK | MB_ICONINFORMATION);
@@ -226,6 +235,7 @@ void SaveCurrentGameEdits(HWND hwnd) {
 
     if (StorefrontScanner::SavePerGameMetadata(g)) {
         SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, Storage::GetUserRootPath().c_str(), nullptr);
+        EnumWindows(BroadcastRefreshToShellViews, 0);
         const std::wstring currentAppId = g.appId;
         RefreshGameList(hwnd, currentAppId);
         MessageBoxW(hwnd, L"Game metadata and box art saved to your Game Explorer library.", L"Game Explorer Manager", MB_OK | MB_ICONINFORMATION);
@@ -782,6 +792,7 @@ LRESULT CALLBACK ManagerWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
                 chosenExe
             )) {
                 if (StorefrontScanner::AddCustomLocalGame(chosenExe)) {
+                    EnumWindows(BroadcastRefreshToShellViews, 0);
                     RefreshGameList(hwnd);
                     if (!g_games.empty()) {
                         g_selectedIndex = static_cast<int>(g_games.size() - 1);
@@ -797,6 +808,7 @@ LRESULT CALLBACK ManagerWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
             if (g_selectedIndex >= 0 && static_cast<size_t>(g_selectedIndex) < g_games.size()) {
                 const auto& g = g_games[static_cast<size_t>(g_selectedIndex)];
                 if (StorefrontScanner::RemoveCustomLocalGame(g.appId)) {
+                    EnumWindows(BroadcastRefreshToShellViews, 0);
                     RefreshGameList(hwnd);
                 } else {
                     MessageBoxW(hwnd, L"Storefront games are managed by their provider client. Only custom local games or saved metadata overrides can be removed.", L"Game Explorer Manager", MB_OK | MB_ICONINFORMATION);

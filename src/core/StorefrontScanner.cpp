@@ -945,6 +945,7 @@ std::vector<GameItem> StorefrontScanner::ScanItch() {
                                 item.coverArtPath = CacheRemoteArtwork(item.appId, L"cover", coverUrl);
                             }
 
+                            LoadPerGameMetadata(item);
                             SavePerGameMetadata(item);
                             games.push_back(std::move(item));
                         }
