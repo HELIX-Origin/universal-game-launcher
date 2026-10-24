@@ -1,7 +1,7 @@
 # HANDOFF.md — Windows Game Explorer Session Handoff
 
 **Last updated:** 2026-10-24
-**Current session status:** W.54 completed · `v2.0.0` Official Release Published
+**Current session status:** W.54 completed · `v2.0.1` Official Release Published & README Preview Added
 **Project:** windows-game-explorer (Windows Game Explorer)
 **Root:** projects/windows-game-explorer
 
