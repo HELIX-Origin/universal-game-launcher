@@ -1,12 +1,12 @@
 name: ✨ Feature request
-description: Suggest an idea or improvement for {universal-game-launcher}
+description: Suggest an idea or improvement for Windows Game Explorer
 title: "[Feature]: "
 labels: ["enhancement", "triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve {universal-game-launcher}! Please describe the problem first, then your
+        Thanks for helping improve Windows Game Explorer! Please describe the problem first, then your
         proposed solution.
   - type: checkboxes
     id: preflight

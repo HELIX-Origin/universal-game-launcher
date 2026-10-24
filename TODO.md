@@ -1,6 +1,6 @@
-# Universal Game Launcher — Task Checklist & Workstream Tracking
+# Windows Game Explorer — Task Checklist & Workstream Tracking
 
-> 📋 **Living Source of Truth**: Actionable task ledger for **Universal Game Launcher**.
+> 📋 **Living Source of Truth**: Actionable task ledger for **Windows Game Explorer** (`projects/windows-game-explorer`).
 > Statuses: ⬜ backlog · 🚧 in progress · ✅ done (tracked as `- [ ]` and `- [x]` checkboxes).
 > High-level direction lives in [`ROADMAP.md`](./ROADMAP.md), active sprints in [`PLAN.md`](./PLAN.md), issues in [`BUGS.md`](./BUGS.md).
 
@@ -8,134 +8,75 @@
 
 ## 📜 Tracking Rules
 
-- **100% Active Direction Accuracy**: Task items and checklists must reflect the current state of Universal Game Launcher with zero contradictions.
+- **100% Active Direction Accuracy**: Task items and checklists must reflect the current state of Windows Game Explorer with zero contradictions.
 - **Normalized Directives**: Rewrite user directives into clean, self-contained engineering requirements.
-- **Done Moves Down**: Completed items are marked with `- [x]` and archived when workstreams finish.
-- **Zero-Warning Gate**: All builds and tests must pass with 0 errors and 0 warnings (`cargo test`, `svelte-check`).
+- **Done Moves Down**: Completed items are marked with `- [x]` and collapsed to minimal one-line entries under completed workstreams.
+- **Zero-Warning Gate**: All builds and tests must pass with 0 errors and 0 warnings (`MSVC /W4 /WX` warnings treated as errors).
+- **Game Library Experience Invariant**: Must provide an authentic, rich game library (two-section categorization, vertical box art, metadata properties); generic shortcuts folder degradation is strictly rejected.
 
 ---
 
 ## 🔥 Active Workstreams
 
-### 🎯 [universal-game-launcher] Workstream W.57: Rust-Owned Core Re-Architecture & Performance Budgets (v2.0.0)
-- **Project Identifier:** `[universal-game-launcher]`
-- **Repository Path:** `projects/universal-game-launcher`
-- **Status:** 🚧 In progress (user directive 2026-10-21). Takes priority over W.55; absorbs the open W.56 launcher items and BUG-1.
-- **Target Component:** Rust core (`src-tauri/src/`) + Svelte UI (`src/`)
+### 🎯 [windows-game-explorer] Workstream W.54: Windows Game Explorer Shell Extension & Lifecycle Management (v2.0.0)
+- **Project Identifier:** `[windows-game-explorer]`
+- **Repository Path:** `projects/windows-game-explorer`
+- **Status:** 🚧 In progress (v2.0.0 native C++20 architecture).
+- **Target Component:** Native C++20 Win32 Shell Extension & Companion Apps (`src/shell/`, `src/config/`, `src/manager/`, `src/core/`).
 
 **Locked user directives (normalized by domain):**
-- **Product goal**: A fast, modern unified library for every game and every storefront on Windows, macOS, and Linux that runs as smoothly as Steam while supporting every game possible.
-- **Launch model**: Games launch through their storefront's own client/launcher (protocol URI or official launcher executable), so the app never needs internal authorization or stored credentials.
-- **Framework decision (delegated to agent, recorded 2026-10-21)**: Stay on Tauri v2 + Svelte 5 and rebuild the core first. Decide the UI shell by benchmark. A Chromium shell (Electron + Rust N-API core, Svelte UI kept) is the approved fallback only if an OS misses the performance budgets after the core rework.
-- **Versioning**: The breaking data-model migration ships as `v2.0.0`.
+- **Project Rebrand to Windows Game Explorer**: Formally name and brand the project **Windows Game Explorer** (`projects/windows-game-explorer`) across all rules, skills, ledgers, CMake targets, and repository headers, removing all legacy Tauri v2 references.
+- **Authentic Windows Game Explorer Revival (No Generic Shortcuts Folders)**: Recreate and modernize the authentic Windows 7/Vista Game Explorer (`shell:Games`, `FOLDERTYPEID_Games`) directly inside Windows 11 File Explorer.
+  - **Two-Section Categorization**: Separate items into two collapsible groups via `ICategoryProvider` and `ICategorizer` (`PKEY_ItemTypeText`): `▾ Game Providers (N)` for installed storefront clients and `▾ Games (N)` for installed game titles.
+  - **Main View**: Rich game representations—tall ~2:3 box art tiles or grouped details list with developer/publisher. Falling back to a generic shortcuts folder (`CDefView` file rows without categorization and box art) is strictly prohibited.
+  - **Bottom / Side Property Details**: Game metadata (Publisher, Developer, Release date, Rating, Size) populated via `IPropertyStore`.
+- **Storefront-First Metadata Model (No External Scrapers)**: External third-party metadata scrapers (IGDB, SteamGridDB, VNDB) are removed. Installed storefront providers (Steam, Epic Games, GOG Galaxy, Battle.net, itch.io) are used directly as the sole source of truth for their games' metadata and box art.
+- **Core Architecture & Triple-Component OS Integration**:
+  - **1. In-Shell Primary App (`GameExplorerShell.dll`)**: Virtual Shell Namespace Extension (`IShellFolder2`, `IPersistFolder2`, `ICategoryProvider`, `ICategorizer`, `IThumbnailProvider`, `IShellItemImageFactory`, `IPropertyStore`, `IExtractIconW`, `IContextMenu`) pinned in the File Explorer left navigation pane alongside Gallery and Home.
+  - **2. Integration Configuration GUI (`GameExplorerConfig.exe`)**: Standalone lightweight Win32 configuration utility dedicated strictly to configuring the shell integration (enable/disable namespace registration, layout preference, storefront integration toggles, and OneDrive cloud sync preferences).
+  - **3. Game Explorer Manager GUI (`GameExplorerManager.exe`)**: Separate, dedicated Win32 GUI application alongside `GameExplorerConfig.exe` reviving the classic Game Explorer Manager (GEM) utility for managing the games in the library, adding local/custom games (`.exe`, `.lnk`, `.bat`, ROMs), picking box art/icons, and editing game metadata (`%USERPROFILE%\Game Explorer\metadata\<appId>.json`).
+- **Zero Configuration Dependency Invariant**: The File Explorer shell extension (`GameExplorerShell.dll`) is 100% independent of `GameExplorerConfig.exe` and `GameExplorerManager.exe` running. Direct in-memory scanning operates entirely in-process.
+- **Native Windows 11 Light & Dark UI Styles**: Dynamically detects `AppsUseLightTheme`, rendering authentic dark gray (`RGB(32, 32, 32)` dark / `RGB(255, 255, 255)` light), system accent highlights, and themed Win32 controls.
+- **Execution & Cloud Sync**: Platform-native game launching invoking client executables directly in the launch path (`steam.exe -applaunch <appId>`, etc.) with direct execution for DRM-free titles. Decentralized metadata backup leveraging the local OneDrive folder.
 
 **Implementation checklist:**
-- [ ] **[universal-game-launcher] 1. Performance Baseline & Budgets**:
-  - [ ] `[universal-game-launcher]` 10k-game mock library seeder + benchmark script (cold start, scroll fps, search latency, idle RAM).
-  - [ ] `[universal-game-launcher]` Record the v1.4.1 baseline; codify budgets (cold start < 1.5 s, 60 fps at 10k, search < 50 ms, RAM target).
-- [ ] **[universal-game-launcher] 2. Storefront-Neutral Model & `StoreAdapter` Trait**:
-  - [ ] `[universal-game-launcher]` Define `StoreAdapter` (`detect`, `scan`, `launch_spec`, `install_uri`, `uninstall_uri`, `store_uri`); key `Game` by `(store, store_id)`.
-  - [ ] `[universal-game-launcher]` Port Steam, Epic, GOG, itch, Xbox, EA, Ubisoft, Battle.net, Amazon, Rockstar, emulation, and manual scanners onto the trait.
-  - [ ] `[universal-game-launcher]` Remove `accountId3` from library, collection, and filter APIs.
-  - [ ] `[universal-game-launcher]` v1 → v2 SQLite migration preserving favorites, custom names, overrides, collections, and playtime.
-- [ ] **[universal-game-launcher] 3. Query-Driven Library**:
-  - [ ] `[universal-game-launcher]` `query_library(filter, sort, offset, limit)` + `library_counts()` on SQLite FTS5 + covering indices.
-  - [ ] `[universal-game-launcher]` Replace the full `load_library → Game[]` payload in the UI.
-  - [ ] `[universal-game-launcher]` Stream scan/metadata progress over Tauri channels; remove per-key KV IPC (`redis.ts`) from UI hot paths.
-- [ ] **[universal-game-launcher] 4. Virtualized UI & Image Pipeline**:
-  - [ ] `[universal-game-launcher]` Virtualized sidebar list and library grid.
-  - [ ] `[universal-game-launcher]` Rust thumbnail cache served via a custom URI protocol (no base64/data URLs).
-  - [ ] `[universal-game-launcher]` Split `commands.rs`, `library/+page.svelte`, and `library.scss` into domain modules.
-- [ ] **[universal-game-launcher] 5. Dynamic Multi-Source Scraper & Drop Static Repositories**:
-  - [ ] `[universal-game-launcher]` Remove static hand-rolled games (`HAND_ROLLED_GAMES`) and hardcoded developer dictionary (`developers.rs`).
-  - [ ] `[universal-game-launcher]` Implement dynamic scrapers in Rust for non-Steam and indie titles (itch.io search/store scraping, IndieDB API/scraper, VNDB API v2, PCGamingWiki, Wikipedia/Wikidata).
-  - [ ] `[universal-game-launcher]` Automatic multi-source fallback cascade so indie and itch games have complete artwork (capsule, hero), developer, publisher, and genre coverage without manual intervention.
-- [ ] **[universal-game-launcher] 6. Single Source of Truth & Typed Bindings**:
-  - [ ] `[universal-game-launcher]` Delete the TS duplicates (plugin engine, universal metadata, developers, title normalizer, platform specs) once their Rust equivalents are wired.
-  - [ ] `[universal-game-launcher]` Generate TS bindings from Rust (`specta` / `tauri-specta`).
-- [ ] **[universal-game-launcher] 7. Unified Launch Path**:
-  - [ ] `[universal-game-launcher]` All launches resolve via `StoreAdapter::launch_spec`; implement the remaining W.56 launchers (Jagex, XIV Launcher, FFXIV official, GW2 official) and fix BUG-1.
-- [ ] **[universal-game-launcher] 8. Shell Gate & Release**:
-  - [ ] `[universal-game-launcher]` Re-benchmark on Windows, macOS, and Linux; run a time-boxed Chromium-shell spike if any OS fails.
-  - [ ] `[universal-game-launcher]` Zero-warning gate (`RUSTFLAGS="-D warnings" cargo check`, `cargo test`, `npm run check`) and release `v2.0.0`.
-
----
-
-### 🎯 [universal-game-launcher] Workstream W.55: Cloud Gaming Streaming Hooks & Gamepad Handheld Mode (Queued — v2.1.0, after W.57)
-- **Project Identifier:** `[universal-game-launcher]`
-- **Repository Path:** `projects/universal-game-launcher`
-- **Target Component:** Core Launcher & UI
-
-```mermaid
-flowchart TD
-    W55_1["[universal-game-launcher] Cloud Provider Hooks"] --> W55_2["[universal-game-launcher] Controller Big Picture Mode"]
-```
-
-**Implementation checklist:**
-- [ ] **[universal-game-launcher] 1. Cloud Gaming URI Integration**:
-  - [ ] `[universal-game-launcher]` Implement launch handlers and URI schemes for GeForce NOW, Xbox Cloud Gaming, and Moonlight/Sunshine (as `StoreAdapter` implementations).
-  - [ ] `[universal-game-launcher]` Add cloud provider pills and status badges to library game cards.
-- [ ] **[universal-game-launcher] 2. Gamepad & Big Picture Overlay**:
-  - [ ] `[universal-game-launcher]` Implement gamepad input driver supporting standard controllers (Xbox, DualShock/DualSense, Switch Pro).
-  - [ ] `[universal-game-launcher]` Design full-screen Big Picture layout tailored for handheld displays (Steam Deck, ROG Ally, Legion Go).
-- [ ] **[universal-game-launcher] 3. Quality Verification**:
-  - [ ] `[universal-game-launcher]` Verify zero errors and zero warnings across `npm run check` and `RUSTFLAGS="-D warnings" cargo check`.
-
----
-
-### [universal-game-launcher] Workstream W.56: Platform-Native Game Launching and Auto-Detected Launchers
-- **Project Identifier:** [universal-game-launcher]
-- **Repository Path:** projects/universal-game-launcher
-- **Status:** In progress (user directive 2026-10-21). Remaining launcher items are delivered through W.57 §6 (`StoreAdapter::launch_spec`).
-- **Target Component:** Core Launcher (Rust) + Settings UI (Svelte)
-
-**Locked user directives (normalized by domain):**
-- **Platform-native launch**: Games on platforms that require their store/launcher (Steam, Epic, Battle.net, Ubisoft, EA, Rockstar, Amazon, Xbox, Jagex Launcher, XIV Launcher, FFXIV official launcher, Guild Wars 2 official launcher, etc.) MUST be launched through the official launcher executable/protocol so DRM, overlays, and account injection work. Direct binary execution is only a fallback for platforms that permit it (itch.io, GOG, Standalone, Other).
-- **Steam account injection**: Steam games must invoke steam.exe directly with steam://run/{appid} (not cmd /c start) so the logged-in account is passed to the game.
-- **Auto-detection**: Launchers/stores/platforms are auto-detected; they no longer need to be enabled/disabled/displayed as toggles in Settings.
-- **Legendary optional toggle**: Legendary CLI support is an optional setting (legendary_enabled) that bypasses the Epic Games Launcher method.
-- **API keys in Settings**: Settings must expose fields for Steam Web API key, Guild Wars 2 API key, IGDB client id/secret, and other game API keys required for full support.
-- **Additional launchers**: Add support for Jagex Launcher, XIV Launcher, Square Enix FFXIV official launcher, Guild Wars 2 official launcher, etc.
-- **Capabilities**: Tauri capabilities folder verified present and correct (default.json with opener plugin); only the opener plugin is used.
-
-**Implementation checklist:**
-- [x] [universal-game-launcher] Steam games launch via steam.exe steam://run/{appid} (account injection).
-- [x] [universal-game-launcher] Reorder launch_game so store-required platforms skip direct-exe-first.
-- [x] [universal-game-launcher] Add legendary_enabled, gw2_api_key, jagex_launcher_path, xiv_launcher_path to Settings.
-- [ ] [universal-game-launcher] Implement direct-executable invocation for Epic, Battle.net, Ubisoft, EA, Rockstar, etc.
-- [ ] [universal-game-launcher] Add Jagex Launcher, XIV Launcher, FFXIV official, GW2 official launcher support.
-- [ ] [universal-game-launcher] Remove launcher enable/disable toggles from Settings UI; rely on auto-detection.
-- [ ] [universal-game-launcher] Add API key input fields (Steam Web API, GW2, IGDB, etc.) to Settings UI.
-- [ ] [universal-game-launcher] Research correct invocation for each launcher/store and document.
-- [ ] [universal-game-launcher] Quality gate: cargo check + npm run check with 0 warnings.
+- [x] **[windows-game-explorer] 1. Shell Integration & Core Architecture (Pure Native Windows Execution)**:
+  - [x] `[windows-game-explorer]` Generate unique GUID/CLSID (`CLSID_GameExplorer`, `CLSID_GameCategorizer`); implement COM registration (`DllRegisterServer`/`DllUnregisterServer`) mapping shell namespace node beneath Windows Registry (`NameSpace`, `FolderTypes`, and navigation tree pinning as a "Games" tab).
+  - [x] `[windows-game-explorer]` Implement `IShellFolder2` and `IPersistFolder2` COM interfaces for virtual shell root recognized by File Explorer.
+  - [x] `[windows-game-explorer]` Vector icon integration: author `assets/game-explorer-icon.svg` and compile multi-res `.ico` (16, 20, 24, 32, 48, 64, 128, 256) embedded in `GameExplorerShell.dll`.
+  - [x] `[windows-game-explorer]` Windows 11 Light/Dark theme rendering with double-buffering, authentic palettes, and Segoe UI Variable typography.
+- [x] **[windows-game-explorer] 2. Multi-Store & Multi-Drive Storefront Indexing Engine**:
+  - [x] `[windows-game-explorer]` Enumerate all mounted drives (fixed and removable) via `GetLogicalDriveStringsW`.
+  - [x] `[windows-game-explorer]` Steam parser across all library folders (`libraryfolders.vdf`, `appmanifest_*.acf`) with local grid art discovery (`appcache/librarycache/<appId>/library_600x900.jpg`).
+  - [x] `[windows-game-explorer]` Itch.io reader via `%APPDATA%\itch\db\butler.db` and multi-drive scanning (`<Drive>\Games\itch\games`).
+  - [x] `[windows-game-explorer]` Epic Games (`.item` manifests), GOG Galaxy (Registry), Battle.net, Ubisoft Connect, and EA App discovery.
+  - [x] `[windows-game-explorer]` DRM-aware client launching: `steam.exe -applaunch` for Steam DRM, client launch for Epic/GOG/Battle.net, direct execution for DRM-free itch.io/standalone games.
+- [x] **[windows-game-explorer] 3. Storefront-First Metadata & Native Shell Categorization (No External Scrapers)**:
+  - [x] `[windows-game-explorer]` Direct Storefront Data Invariant: Eliminate external scrapers (IGDB, VNDB, SteamGridDB); use installed storefront providers directly as the sole source of truth for their metadata and box art.
+  - [x] `[windows-game-explorer]` Harvest local Steam 600×900 vertical box art and hero banners directly from disk with ~5ms scan time.
+  - [x] `[windows-game-explorer]` Implement `ICategoryProvider` and `ICategorizer` dividing File Explorer into two authentic collapsible sections:
+    - [x] `▾ Game Providers (N)`: Installed storefront clients (Steam, Epic Games, GOG GALAXY, Battle.net, Ubisoft Connect, EA App, itch.io).
+    - [x] `▾ Games (N)`: Installed game titles with rich vertical box art and properties.
+  - [x] `[windows-game-explorer]` Implement `IThumbnailProvider` and `IShellItemImageFactory` delivering ~2:3 vertical cover art for games and authentic provider logos for storefronts.
+  - [x] `[windows-game-explorer]` Implement `IPropertyStore` mapping `PKEY_ItemTypeText` ("Game Providers" vs "Games"), `PKEY_ItemNameDisplay`, `PKEY_Company`, `PKEY_Author`, `PKEY_Rating`, and `PKEY_Size`.
+- [ ] **[windows-game-explorer] 4. Game Explorer Manager GUI Application (`GameExplorerManager.exe`)**:
+  - [ ] `[windows-game-explorer]` Revival of classic Game Explorer Manager (GEM) utility as a dedicated Win32 management companion (`src/manager/ManagerMain.cpp`).
+  - [ ] `[windows-game-explorer]` Native custom game registration: add local executables (`.exe`, `.bat`, `.cmd`, `.lnk`, ROMs) via standard Win32 file picker.
+  - [ ] `[windows-game-explorer]` Rich box art selector: choose tall box art (~2:3 case style), wide hero banners, and app icons with preview canvas.
+  - [ ] `[windows-game-explorer]` Metadata editor: edit title, developer, publisher, release date, genre, box rating (ESRB/PEGI/USK), synopsis, command-line arguments, and working directory.
+  - [ ] `[windows-game-explorer]` Per-game persistence: save clean, portable definitions to `%USERPROFILE%\Game Explorer\metadata\<appId>.json`.
+  - [ ] `[windows-game-explorer]` Library management: customize or remove local game entries and trigger immediate File Explorer namespace refresh.
+- [ ] **[windows-game-explorer] 5. Integration Configuration Utility Updates (`GameExplorerConfig.exe`)**:
+  - [ ] `[windows-game-explorer]` Remove legacy external scraper API key fields (IGDB, SteamGridDB) from `ConfigMain.cpp`.
+  - [ ] `[windows-game-explorer]` Focus `GameExplorerConfig.exe` strictly on shell integration enable/disable, layout mode preference, storefront integration toggles, and OneDrive cloud sync, with a button to launch `GameExplorerManager.exe`.
+- [ ] **[windows-game-explorer] 6. Quality Verification, Native Build Tooling & Upstream Sync**:
+  - [x] `[windows-game-explorer]` Complete project rebranding from `universal-game-launcher` to `windows-game-explorer` across directory name, CMake, docs, and agent files.
+  - [ ] `[windows-game-explorer]` Design and implement a native CMake/PowerShell/C++ build, test, and signing runner (`scripts/`) replacing the retired legacy `.mjs` Tauri v2 scripts.
+  - [x] `[windows-game-explorer]` Enforce zero compiler warnings (`MSVC /W4 /WX` warnings as errors) and 100% unit test pass rate (`GameExplorerTests.exe`).
+  - [ ] `[windows-game-explorer]` Commit and push current progress to upstream via a new branch and rename upstream repository to `windows-game-explorer`.
 
 ---
 
 ## ✅ Completed Workstreams
 
-### 🎯 [universal-game-launcher] Workstream W.53: Helix Gaming DB Three-Tier REST API Integration & Hand-Rolled Catalog Deprecation (Release v1.4.1)
-- **Delivered (2026-10-16):**
-  - [x] `[universal-game-launcher]` Upgraded `src/lib/plugins/metadata/helix-db.ts` to support `/api/manifest.json`, `/api/v2/` relational discovery, and `/api/v3/` dedicated adult tier.
-  - [x] `[universal-game-launcher]` Implemented in-memory caching (`cachedV2Index`, `cachedV3Index`) and persistent KV fallback (`api.kvSetJson`, `api.kvGetJson`).
-  - [x] `[universal-game-launcher]` Deleted all 28 redundant static developer files (`src/lib/plugins/metadata/developers/*.ts`, saving 3,000+ lines of static code).
-  - [x] `[universal-game-launcher]` Streamlined `developers/index.ts` with lightweight studio profiles preserving matching algorithms.
-  - [x] `[universal-game-launcher]` Quality verification: passed `svelte-check` (0 errors, 0 warnings), `cargo test` clean.
-
-### 🎯 [universal-game-launcher] Workstream W.49: Universal Core Plugins, Authentic SVG Platform Icons & Per-Game Customization (Release v1.4.0)
-- **Delivered (2026-10-14):**
-  - [x] `[universal-game-launcher]` Consolidated Universal Core Plugins architecture under `src/lib/plugins/`.
-  - [x] `[universal-game-launcher]` Authored authentic vector SVG platform icon variants (`<PlatformIcon />`).
-  - [x] `[universal-game-launcher]` Multi-source automatic metadata cascade (Local Engine, Libretro Thumbnails, Steam Store, GOG, Wikipedia, PCGamingWiki, ProtonDB).
-  - [x] `[universal-game-launcher]` Implemented `⚙ Manage` per-game customization modal with `userEnhanced: true` protection.
-
-### 🎯 [universal-game-launcher] Workstream W.47: Project Script Standards & Manifest Schema 1.12.0 (Release v1.3.3)
-- **Delivered (2026-10-10):**
-  - [x] `[universal-game-launcher]` Canonical `main:sub:option` scripts, schema 1.12.0 validation, `.vscode` untracking, release CI.
-
-### 🎯 [universal-game-launcher] Workstream W.46: Cross-Platform Compiler Warning Elimination (Release v1.3.2)
-- **Delivered (2026-10-06):**
-  - [x] `[universal-game-launcher]` Resolved compiler warnings across POSIX and Windows targets with zero warnings.
-
-### 🎯 [universal-game-launcher] Workstream W.45: Multi-Platform Free Game Checker & Deals Engine (Release v1.3.1)
-- **Delivered (2026-10-02):**
-  - [x] `[universal-game-launcher]` Per-platform checkers, deals engine (`utility-gamerpower`), patch notes feed, sidebar cog.
+- *Historical pre-v2.0.0 workstreams are recorded in [`CHANGELOG.md`](./CHANGELOG.md).*

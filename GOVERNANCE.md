@@ -1,6 +1,6 @@
 # Governance
 
-This document describes how **Universal Game Launcher** (a [HELIX Origin](https://github.com/HELIX-Origin) project) is governed.
+This document describes how **Windows Game Explorer** (a [HELIX Origin](https://github.com/HELIX-Origin) project) is governed.
 
 ## Roles
 

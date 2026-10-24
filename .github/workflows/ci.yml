@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'v2.0*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -15,52 +15,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend:
-    name: Frontend Verification
-    runs-on: ubuntu-latest
+  build:
+    name: Native C++20 Build & Tests (Windows)
+    runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'npm'
+      - name: Configure CMake
+        run: cmake -B build -S .
 
-      - name: Install dependencies
-        run: npm ci || npm install
+      - name: Build Release (/W4 /WX zero warnings)
+        run: cmake --build build --config Release
 
-      - name: SvelteKit sync & type-check
-        run: npm run check
-
-  backend:
-    name: Rust Backend (${{ matrix.platform }})
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [windows-latest, ubuntu-22.04]
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install Linux system dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev xdg-utils
-
-      - name: Cargo check
-        run: cargo check --manifest-path src-tauri/Cargo.toml
-
-      - name: Cargo test
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Run C++ Unit Tests
+        run: ctest --test-dir build -C Release --output-on-failure

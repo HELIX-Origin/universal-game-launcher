@@ -1,99 +1,75 @@
-# Local Conventions — universal-game-launcher
+# Local Conventions — Windows Game Explorer (`projects/windows-game-explorer`)
 
-## Layout
+> Authoritative conventions for **Windows Game Explorer** (`projects/windows-game-explorer`).
+> Follows the v2.0.0 architecture: completely native to Windows (C++20 Win32 + COM Shell Extension).
+> Recreates and modernizes the classic Windows 7/Vista Game Explorer directly inside Windows 11 File Explorer.
 
-- **Rust backend:** `src-tauri/src/` — `lib.rs` (builder + command registration), `commands.rs`,
-  `plugins/` (platform adapters, title normalizer), `metadata/` (metadata cascade engine),
-  `db.rs` (SQLite pool, migrations), `image.rs` (image pipeline), `error.rs`.
-- **Frontend:** `src/` SvelteKit SPA:
-  - `src/lib/plugins/` — Universal Core Plugins (thin TS bindings over Rust logic)
-    - `platforms/universal.ts` (`platform-universal`) — all 12 platform providers
-    - `metadata/universal.ts` (`metadata-universal`) — metadata & artwork cascade
-    - `utility/title-normalizer.ts` (`utility-title-normalizer`)
-    - `media/universal.ts` (`media-universal`)
-    - `utility/gamerpower.ts`, `utility/storage-analyzer.ts`
-  - `src/lib/styles/` — `_tokens.scss` (design tokens), `app.scss`, component styles
-  - `src/lib/components/` — Svelte components
-  - `src/lib/stores/` — Svelte stores
-  - `src/routes/` — SvelteKit routes (`/`, `/library`, `/store`, `/social`, `/storage`, `/settings`)
-- All Tauri commands are registered in `src-tauri/src/lib.rs` and typed via `specta`/`tauri-specta`.
+---
 
-## Frontend
+## 1. Game Library Experience Invariant (No Generic Shortcuts Folders)
 
-- **Svelte 5 runes** (`$state`, `$derived`, `$effect`, `$props`); strict TypeScript.
-- **SCSS-first:** all styles in SCSS; design tokens defined in `src/lib/styles/_tokens.scss`.
-  No hardcoded color values anywhere — always use a token variable (e.g. `var(--accent)`,
-  `var(--panel)`). No Tailwind, no utility-class frameworks.
-- `kebab-case` files/folders; `PascalCase` component names; prefer `$lib/` imports.
+Windows Game Explorer is fundamentally an authentic, rich, visual **Game Library** inside Windows File Explorer — continuing and elevating the vision of Microsoft's legacy Windows Game Explorer.
 
-## Plugin architecture
+> [!CAUTION]
+> **Generic Shortcuts Folder Degradation is Strictly Prohibited.**
+> Falling back to vanilla Windows Explorer list views (`SHCreateShellFolderView` / `CDefView`) without proper Game Explorer categorization, vertical box art thumbnails, and game properties reduces the virtual folder to nothing more than a plain folder of file shortcuts. Any implementation that results in a generic shortcuts folder is classified as a design regression and is rejected.
 
-- Each plugin lives in `src/lib/plugins/<domain>/<name>.ts` (e.g. `platforms/universal.ts`).
-- Every plugin file must **export a typed interface** (e.g. `PlatformPlugin`, `MetadataProvider`).
-- **Never add new business logic to the TypeScript layer.** Rust is the single source of truth.
-  The TS plugins are thin bindings that invoke Rust commands and type the responses.
-- **Platform detection** always goes through the `platform-universal` plugin
-  (`src/lib/plugins/platforms/universal.ts`). UI components must never call Tauri APIs directly
-  for platform detection or scanning.
+The shell integration must deliver an authentic game library experience:
+- Two explicit collapsible sections (`▾ Game Providers (N)` and `▾ Games (N)`) powered by `ICategoryProvider` and `ICategorizer`.
+- Dedicated visual presentation (tall ~2:3 box art covers for games and authentic client icons for storefront providers).
+- Persistent Details / Preview integration featuring complete game metadata (title, platform, rating, developer, release date, disk footprint) and one-click launch controls.
+- Active system accent colorization and dark/light mode synchronization with Windows 11 DWM.
 
-## Metadata cascade
+---
 
-Metadata scrapers implement the `MetadataProvider` interface with a field-by-field cascade:
+## 2. Ban on Blind Trial-and-Error Shell Extension Code Loops
 
-```
-SteamGridDB (optional key) → IGDB (optional key) → OpenCritic → PCGamingWiki (keyless)
-  → Steam Store CDN (keyless) → GOG Catalog (keyless) → offline fallback
-```
+> [!IMPORTANT]
+> **No Speculative Guessing on Shell COM Interfaces.**
+> Windows Explorer (`explorer.exe`) hosts shell extensions in-process within its critical Single-Threaded Apartment (STA) main UI thread. A crash or stack overflow in a shell extension crashes the entire Windows shell interface.
 
-- Providers are implemented in Rust (`src-tauri/src/metadata/`) and invoked via Tauri commands.
-- **Never overwrite `userEnhanced: true` metadata** unless the user explicitly purges the cache.
-- No manual "Refresh Metadata" buttons in the library topbar — cache management is in Settings only.
+When a shell crash occurs (e.g. `0xc00000fd` `STATUS_STACK_OVERFLOW` in `ntdll.dll` or access violations):
+1. **Never Make Blind Guesses**: Agents must **NEVER** repeatedly toggle between raw `IShellView` hacks and default `CDefView` fallbacks in iterative guesswork loops.
+2. **Mandatory Documentation Research**: Before touching or altering shell extension view or folder code, agents must thoroughly research official Microsoft technical documentation, Windows SDK architecture specifications, and verified Win32/COM shell contracts.
+3. **Analyze Root Causes Thoroughly**: Inspect exact crash offsets, event logs, call stacks, and COM interface query sequences (`QueryInterface` requests for `IFolderView`, `IFolderView2`, `ICategoryProvider`, `IThumbnailProvider`, `IPropertyStore`).
 
-## SCSS tokens
+---
 
-All token variables are defined in `src/lib/styles/_tokens.scss`. Key tokens:
+## 3. Official Microsoft Shell Contracts for Game Explorer Revival
 
-| Token | Role |
-|---|---|
-| `--bg-0` / `--bg-1` / `--bg-2` | Background depth layers |
-| `--panel` / `--panel-strong` | Card and modal surfaces |
-| `--accent` / `--accent-2` | Primary/secondary accent colors |
-| `--text` / `--text-dim` / `--text-mute` | Text hierarchy |
-| `--ok` / `--warn` / `--danger` | Status colors |
-| `--platform-<id>-gradient/accent/glow` | Per-platform auto-generated tokens |
+Recreating the authentic Windows 7 Game Explorer inside modern Windows 11 requires implementing the standard Microsoft Shell COM interfaces:
+- **`FOLDERTYPEID_Games` (`{b689b0d0-76d3-4cbb-87f7-585d0e0ce070}`):** The canonical Windows folder type for games, defining default columns (Name, Platform, Developer, Release Date, Rating, Size) and tile/icon presentation.
+- **`ICategoryProvider` & `ICategorizer`:** Groups items by `PKEY_ItemTypeText` into `▾ Game Providers` (`itemKind = 0`) and `▾ Games` (`itemKind = 1`).
+- **`IThumbnailProvider` & `IShellItemImageFactory`:** Supplies high-resolution vertical game box art (~2:3 / 600×900) and storefront logos as bitmaps so File Explorer renders game covers directly in Icon and Tile views.
+- **`IPropertyStore`:** Implements the Windows Property System for game items, populating `PKEY_ItemTypeText`, `PKEY_ItemNameDisplay`, `PKEY_Rating`, `PKEY_Company`, `PKEY_Size`, and `PKEY_Media_Year` so Explorer's Details Pane and column sorters display rich metadata.
+- **`IShellFolder2` & `IPersistFolder2`:** Exposes folder enumeration, child item PIDLs, display names, and column sorting.
+- **`IContextMenu`:** Supplies the right-click menu with Play Game / Open Storefront, Open Game Directory, and official launcher actions.
 
-Never hardcode a hex or rgba value in a component. Always use a token.
+---
 
-## Backend
+## 4. Triple-Component Architecture & Layout
 
-- **Rust `snake_case`**; small, focused modules.
-- **Never panic across the Tauri command boundary** — always return `Result<T, AppError>`.
-- **Zero client file tampering:** never write to storefront files (`shortcuts.vdf`, manifests, etc.).
-  Never require a storefront client to be closed.
-- **SQLite lean schema:** metadata index only; no binary blobs in the database. Store images on
-  disk via the image pipeline and reference paths/URIs. Use WAL mode and FTS5 for search.
-- **SQLite migrations** are forward-only — never modify existing migration files.
-- **Image pipeline:** pre-sized thumbnails cached on disk, served via a custom URI protocol.
-  Never use base64 or data-URL artwork.
-- **Push, don't poll:** scans and metadata sync stream progress via Tauri channels/events.
-  The UI never polls with chatty per-key KV IPC calls.
-- **Windowed queries:** the UI calls `query_library(filter, sort, offset, limit)` and renders
-  a virtualized grid. Never send the full `Game[]` array over IPC.
+- **`GameExplorerShell.dll` (`src/shell/`):**
+  - Native Windows Shell Extension DLL implementing `IShellFolder2`, `IPersistFolder2`, `ICategoryProvider`, `ICategorizer`, `IThumbnailProvider`, `IShellItemImageFactory`, `IPropertyStore`, `IExtractIconW`, and `IContextMenu`.
+- **`GameExplorerConfig.exe` (`src/config/`):**
+  - Standalone lightweight Win32 configuration utility window.
+  - Custom titlebar with pill window controls, Fluent rounded cards, and system accent styling.
+  - Dedicated strictly to configuring the shell integration (enable/disable namespace registration, library layout preference, storefront integration toggles, and OneDrive cloud sync).
+- **`GameExplorerManager.exe` (`src/manager/`):**
+  - Separate Win32 GUI application reviving the classic Game Explorer Manager (GEM) utility.
+  - Dedicated to managing the games in the library, adding local/custom games (`.exe`, `.lnk`, `.bat`, ROMs), picking vertical box art and icons, and editing game metadata (`%USERPROFILE%\Game Explorer\metadata\<appId>.json`).
+- **Core Engine & Indexer (`src/core/`):**
+  - Multi-store manifest crawlers and parser modules (Steam `.acf` & `librarycache`, Epic `.item`, GOG Registry, Battle.net, EA App, Ubisoft Connect, itch.io `butler.db`).
+  - Storefront-first metadata model (no external third-party scrapers).
+  - User-scoped storage rooted under `%USERPROFILE%\Game Explorer\`.
 
-## Verification gate
+---
 
-Run before every merge (see `.agents/rules/verification.md` for full commands):
+## 5. Windows Native & C++ Conventions
 
-```
-RUSTFLAGS="-D warnings" cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run check        # svelte-check — 0 errors, 0 warnings
-npm run build        # production Vite build
-node scripts/test.mjs check rust frontend build
-```
-
-## General
-
-- **Never commit generated bundles** (`build/`, `.svelte-kit/`, `src-tauri/target/`); CI builds them.
-- Zero warnings across Rust and TypeScript/Svelte — warnings are treated as errors.
-- **No credential storage:** never handle, scrape, or store third-party user passwords or tokens.
+- **Language Standard:** C++20 standard; MSVC compiler.
+- **Compiler Warnings:** Warning level `/W4` with warnings treated as errors (`/WX`). Zero warnings invariant strictly enforced.
+- **Memory & Resource Management:** RAII for all Win32 handles (`HANDLE`, `HWND`, `HDC`), COM smart pointers (`Microsoft::WRL::ComPtr` or `_com_ptr_t`), and memory allocations.
+- **Unicode & Character Encoding:** Pure `wchar_t` / `std::wstring` for Win32 API calls (`W` suffix functions like `CreateWindowExW`, `RegOpenKeyExW`, `GetFileAttributesW`). UTF-8 (`std::string`) for internal metadata JSON payloads.
+- **Registry & COM:** Clean COM registration and unregistration (`DllRegisterServer`, `DllUnregisterServer`). GUIDs defined explicitly in `Guid.h`.
+- **Native Light & Dark UI Styles:** All visual presentation uses clean, authentic native Windows light and dark styles matching the active Windows system theme (`AppsUseLightTheme`). Use standard system metrics, typography (`Segoe UI` / `Segoe UI Variable`), and native controls.

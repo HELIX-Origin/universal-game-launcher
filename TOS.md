@@ -1,6 +1,6 @@
 # Terms of Service
 
-Please read these Terms of Service ("Terms") carefully before using **Universal Game Launcher** (the "Application"), developed and maintained under the **HELIX Origin** organization.
+Please read these Terms of Service ("Terms") carefully before using **Windows Game Explorer** (the "Application"), developed and maintained under the **HELIX Origin** organization.
 
 ## 1. Acceptance of Terms
 
@@ -8,16 +8,15 @@ By downloading, installing, building, or using the Application, you agree to be 
 
 ## 2. Open-Source License & Permissions
 
-Universal Game Launcher is distributed under the **MIT "New" or "Revised" License**. You are free to inspect, modify, fork, and distribute the software subject to the terms of that license.
+Windows Game Explorer is distributed under the **MIT License**. You are free to inspect, modify, fork, and distribute the software subject to the terms of that license.
 
 ## 3. Third-Party Storefronts & Services
 
-Universal Game Launcher is an independent, non-commercial software project. It is **not endorsed, sponsored by, or affiliated with** Valve Corporation (Steam), GOG sp. z o.o. (GOG Galaxy), Epic Games, Inc., Electronic Arts, Ubisoft Entertainment, Microsoft Corporation, or any other game publisher or storefront operator.
+Windows Game Explorer is an independent, non-commercial software project. It is **not endorsed, sponsored by, or affiliated with** Microsoft Corporation, Valve Corporation (Steam), GOG sp. z o.o. (GOG Galaxy), Epic Games, Inc., Electronic Arts, Ubisoft Entertainment, Blizzard Entertainment, or any other game publisher or storefront operator.
 
-When using features that interact with third-party storefront APIs or services:
-- You agree to comply with each service's respective Terms of Service and API policies.
-- You are responsible for obtaining and maintaining any API keys (e.g. Steam Web API, SteamGridDB) required for optional features.
-- HELIX Origin is not responsible for changes, rate limits, or outages in third-party services.
+When using features that interact with installed third-party storefront clients:
+- You agree to comply with each service's respective Terms of Service.
+- HELIX Origin is not responsible for changes in third-party storefront client manifest formats.
 
 ## 4. No Warranty ("As Is")
 

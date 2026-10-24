@@ -1,5 +1,5 @@
-# Copilot Instructions — Tauri v2 Desktop
+# Copilot Instructions — Windows Game Explorer (Native C++20 Win32 & Shell Extension)
 
-This is a Tauri v2 desktop app (Rust + Svelte/SCSS). Follow project conventions in
-AGENTS.md and .agents/rules/. Enforce zero warnings on both Rust and frontend.
-Project invariants (MIT, SemVer, community-health files) apply.
+This is **Windows Game Explorer** (`windows-game-explorer`), a native C++20 Win32 application suite and Windows File Explorer Shell Namespace Extension (`GameExplorerShell.dll`, `GameExplorerConfig.exe`, `GameExplorerManager.exe`).
+Follow project conventions in `AGENTS.md` and `.agents/rules/`. Enforce zero warnings (`/W4 /WX`) across all C++ targets.
+Project invariants (MIT license, SemVer, community-health files, storefront-first metadata without external scrapers) apply.

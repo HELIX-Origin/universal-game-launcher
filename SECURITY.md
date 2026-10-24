@@ -1,15 +1,15 @@
 # Security Policy
 
-We take the security of **Universal Game Launcher** seriously — for the application itself and for the privacy of the data you keep on your own machine.
+We take the security of **Windows Game Explorer** seriously — for the shell extension and companion utilities, and for the integrity of your Windows environment.
 
 ## 🛡️ Supported Versions
 
 | Version | Supported |
 | --- | --- |
-| 1.4.x | ✅ Active |
-| < 1.4 | ❌ No longer supported |
+| 2.0.x | ✅ Active |
+| < 2.0 | ❌ No longer supported |
 
-Only the latest release receives security fixes. See the [Releases page](https://github.com/HELIX-Origin/universal-game-launcher/releases) for the current version.
+Only the latest release receives security fixes. See the [Releases page](https://github.com/HELIX-Origin/windows-game-explorer/releases) for the current version.
 
 ## 🚨 Reporting a Vulnerability
 
@@ -18,11 +18,11 @@ Only the latest release receives security fixes. See the [Releases page](https:/
 Report privately using GitHub's **private vulnerability reporting**:
 
 - Repository → **Security** → **Report a vulnerability**, or
-- Directly: `https://github.com/HELIX-Origin/universal-game-launcher/security`
+- Directly: `https://github.com/HELIX-Origin/windows-game-explorer/security`
 
 Please include:
 
-1. The affected version(s) and operating system platform.
+1. The affected version(s) and Windows build number.
 2. A clear description of the vulnerability.
 3. Minimal steps to reproduce.
 4. Impact assessment and — if you have one — a suggested fix.
@@ -32,18 +32,18 @@ We aim to acknowledge reports within **5 business days** and to ship a fix for c
 ## 🎯 Scope
 
 In scope:
-- Code execution, path traversal, or arbitrary file writes via the desktop client, installers, or plugins.
-- Exposure, logging, or insecure storage of user-provided API credentials (Steam Web API, SteamGridDB, Twitch/IGDB).
-- Privilege escalation or IPC capabilities escape beyond the Tauri main window.
+- Buffer overflows, memory corruption, or unhandled exceptions inside `GameExplorerShell.dll`, `GameExplorerConfig.exe`, or `GameExplorerManager.exe`.
+- Code execution, path traversal, or arbitrary file writes via manifest parsing or metadata JSON loading.
+- Privilege escalation via COM registration (`HKCU` registry keys).
 
 Out of scope:
 - Issues requiring physical machine access or pre-existing administrator root compromise.
-- Denial of service via local process killing.
-- Upstream vulnerabilities in official storefront APIs or third-party web endpoints.
+- Denial of service via local process termination.
+- Upstream vulnerabilities in third-party storefront clients.
 
-## 🔒 Credential & Data Hygiene
+## 🔒 Data Hygiene
 
-Universal Game Launcher operates on a **local-only, privacy-first model**:
-- Credentials and API keys you provide are stored exclusively on your local machine in SQLite (`database.sqlite`) or configuration files and transmitted strictly to the respective official APIs.
-- No telemetry, analytics, or tracking data is sent to HELIX Origin servers.
-- The app never reads, modifies, or backs up external launcher proprietary configuration files.
+Windows Game Explorer operates on a **100% local-only, privacy-first model**:
+- No telemetry, analytics, or tracking data is sent to any external servers.
+- The extension registers strictly under per-user registry hives (`HKCU\Software\Classes`) without requiring administrator privileges for standard operation.
+- The application never modifies external launcher proprietary configuration files.

@@ -1,11 +1,11 @@
-# Contributing to Universal Game Launcher
+# Contributing to Windows Game Explorer
 
-Thanks for your interest in improving **Universal Game Launcher**! This guide covers development setup, conventions, the quality gate, and how to submit changes.
+Thanks for your interest in improving **Windows Game Explorer**! This guide covers development setup, conventions, the quality gate, and how to submit changes.
 
 > By participating you agree to our [Code of Conduct](./CODE_OF_CONDUCT.md). For security issues,
 > follow [SECURITY.md](./SECURITY.md) — **do not** open a public issue.
 
-Universal Game Launcher is a high-performance cross-platform desktop application built with [Tauri v2](https://tauri.app) (Rust backend + Svelte 5 frontend with modular SCSS). It aggregates games from across PC storefronts and emulators into a unified, privacy-focused library with automatic metadata and artwork enrichment.
+Windows Game Explorer is a native C++20 Win32 application suite and Windows File Explorer Shell Namespace Extension (`GameExplorerShell.dll`, `GameExplorerConfig.exe`, `GameExplorerManager.exe`). It revives the classic Windows 7/Vista Game Explorer directly inside Windows 11 File Explorer with two collapsible sections (`▾ Game Providers` and `▾ Games`), high-resolution vertical box art, rich properties, and automated storefront discovery.
 
 ---
 
@@ -24,9 +24,9 @@ Universal Game Launcher is a high-performance cross-platform desktop application
 
 ## Ways to Contribute
 
-- 🐛 **Report bugs** via [GitHub Issues](https://github.com/HELIX-Origin/universal-game-launcher/issues) (bug form).
-- ✨ **Propose features** via [GitHub Issues](https://github.com/HELIX-Origin/universal-game-launcher/issues) (feature form).
-- 📝 **Improve documentation** in the centralized documentation and technical wiki hubs.
+- 🐛 **Report bugs** via [GitHub Issues](https://github.com/HELIX-Origin/windows-game-explorer/issues) (bug form).
+- ✨ **Propose features** via [GitHub Issues](https://github.com/HELIX-Origin/windows-game-explorer/issues) (feature form).
+- 📝 **Improve documentation** in the repository's `docs/` directory.
 - 🔧 **Submit code** via pull request.
 - 👀 **Review pull requests** from other contributors.
 
@@ -37,45 +37,44 @@ Open an issue or comment on an existing one before starting significant work, so
 ## Development Setup
 
 Prerequisites:
-- [Node.js](https://nodejs.org/) (v20+)
-- [Rust](https://rustup.rs/) (stable, 1.80+)
-- [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your operating system (Windows, macOS, or Linux)
+- Windows 11 (Build 22000+)
+- Visual Studio 2022 / Build Tools (C++20 MSVC v143+)
+- CMake 3.20+
 
-```bash
-npm install
-npm run tauri dev
+```powershell
+cmake -B build -S .
+cmake --build build --config Release
 ```
-
-The Rust build embeds the compiled frontend, so `npm run build` must run before a fresh `cargo` command if `frontendDist` (`build/`) does not yet exist.
 
 ---
 
 ## Architecture Notes
 
-- **Native App Isolation**: Universal Game Launcher never writes to, modifies, or backs up external launcher files (`shortcuts.vdf`, `cloud-storage-namespace-1.json`, or `appmanifest.acf`). Library records and user custom metadata persist exclusively in our local SQLite database (`database.sqlite`) and in-memory Redis KV tier (`mem_kv`).
-- **Universal Core Plugins**: Core architecture is organized into modular plugins (`platform-universal`, `metadata-universal`, `utility-title-normalizer`, `media-universal`, `utility-gamerpower`, `utility-storage`) under `src/lib/plugins/` and `src-tauri/src/`.
-- **Zero In-App Transactions**: Game installations, updates, uninstallation, launches, and storefront checkouts delegate strictly to official platform clients or verified external browser tabs.
+- **Native App Isolation**: Windows Game Explorer never writes to, modifies, or backs up external launcher files (`shortcuts.vdf`, `cloud-storage-namespace-1.json`, or `appmanifest.acf`). User custom metadata overrides and settings persist exclusively in `%USERPROFILE%\Game Explorer\`.
+- **Storefront-First Discovery (No External Scrapers)**: Installed storefront providers (Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA App, itch.io) are used directly as the sole source of truth for their games' metadata and box art.
+- **Triple-Component Architecture**:
+  - `GameExplorerShell.dll`: In-process File Explorer shell extension (`IShellFolder2`, `ICategoryProvider`, `IThumbnailProvider`, `IPropertyStore`).
+  - `GameExplorerConfig.exe`: Integration configuration utility.
+  - `GameExplorerManager.exe`: Game Explorer Manager GUI for managing games and adding local games.
 
 ---
 
 ## Quality Gate
 
-Everything below must pass with **zero errors and zero warnings** before a pull request can be merged:
+Everything below must pass with **zero errors and zero warnings** (`/W4 /WX`) before a pull request can be merged:
 
-```bash
-npm run check             # svelte-check reporting 0 errors and 0 warnings
-npm run build             # vite production build
-cargo test --manifest-path src-tauri/Cargo.toml
-RUSTFLAGS="-D warnings" cargo check --manifest-path src-tauri/Cargo.toml
+```powershell
+cmake -B build -S .
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
 ---
 
 ## Conventions
 
-- **Rust**: Zero warnings (`RUSTFLAGS="-D warnings"`), `cargo fmt` formatting.
-- **Frontend**: Svelte 5 runes (`$state`, `$derived`, `$props`), SCSS design tokens, zero Svelte diagnostics warnings.
-- **Licensing**: Universal Game Launcher is licensed under the **MIT License**.
+- **C++20 / Win32**: Zero compiler or linker warnings (`MSVC /W4 /WX`), RAII handle management, explicit wide-character Win32 APIs (`W` suffix).
+- **Licensing**: Windows Game Explorer is licensed under the **MIT License**.
 - **Changelog**: Update `CHANGELOG.md` when behavior or features change.
 
 ---
@@ -84,7 +83,7 @@ RUSTFLAGS="-D warnings" cargo check --manifest-path src-tauri/Cargo.toml
 
 We use [Conventional Commits](https://www.conventionalcommits.org/) with concise, imperative subjects:
 
-```
+```text
 <type>(<scope>): <short summary in imperative mood>
 ```
 
@@ -102,6 +101,5 @@ Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`, `secur
 
 ## Getting Help
 
-- 📖 **Documentation**: [docs.helix-origin.club/universal-game-launcher](https://docs.helix-origin.club/universal-game-launcher/)
-- 🧠 **Technical Wiki**: [wiki.helix-origin.club/universal-game-launcher](https://wiki.helix-origin.club/universal-game-launcher/)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/HELIX-Origin/universal-game-launcher/discussions)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/HELIX-Origin/windows-game-explorer/discussions)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/HELIX-Origin/windows-game-explorer/issues)

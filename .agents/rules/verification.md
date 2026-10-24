@@ -1,48 +1,40 @@
-# Verification Gate — universal-game-launcher
+# Verification Gate — windows-game-explorer (Windows Game Explorer)
 
-> Run all commands from the repository root unless noted. All must pass with zero errors and zero
-> warnings before merging any branch.
+> Authoritative verification gate for `windows-game-explorer` (Windows Game Explorer).
+> All compilers and linters must pass with zero errors and zero warnings (`/W4 /WX`).
 
-## Commands
+---
 
-```powershell
-# 1. Rust type-check — warnings are errors
-RUSTFLAGS="-D warnings" cargo check --manifest-path src-tauri/Cargo.toml
-
-# 2. Rust test suite
-cargo test --manifest-path src-tauri/Cargo.toml
-
-# 3. Frontend type-check — 0 errors, 0 warnings required
-npm run check
-
-# 4. Production frontend build — must succeed cleanly
-npm run build
-
-# 5. Full test suite via script runner
-node scripts/test.mjs check rust frontend build
-```
-
-## One-shot shortcut
+## 1. Primary Verification Commands
 
 ```powershell
-node scripts/test.mjs check rust frontend build
+# 1. Native C++ build — MSVC warning level /W4 with warnings treated as errors (/WX)
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+
+# 2. Native unit & integration test suite
+ctest --test-dir build -C Release --output-on-failure
+
+# 3. Shell COM extension registration check (if testing live registration)
+regsvr32 /s build\Release\GameExplorerShell.dll
+regsvr32 /u /s build\Release\GameExplorerShell.dll
 ```
 
-This runs all five steps above via the unified script runner. A green exit means the full gate passed.
+---
 
-## Failure modes
+## 2. Zero-Warning Enforcement
 
-| Step | Common cause | Fix |
+- Every build step must produce **0 errors and 0 warnings**.
+- Treat all MSVC compiler warnings as fatal (`/WX`).
+- All unit tests in `GameExplorerTests.exe` must pass cleanly.
+
+---
+
+## 3. Failure Modes & Remediation
+
+| Check | Failure Cause | Remediation |
 |---|---|---|
-| `cargo check` | Unused import / variable warning | Remove or prefix with `_` |
-| `cargo check` | Type mismatch / missing trait impl | Align types; check `error.rs` `From` impls |
-| `cargo test` | Logic regression in adapter or metadata | Fix test; do not `#[ignore]` without justification |
-| `npm run check` | Svelte/TS type error or warning | Fix the type; never use `@ts-ignore` without comment |
-| `npm run build` | SCSS token missing / import error | Check `_tokens.scss`; verify `$lib/` alias |
-
-## CI equivalent
-
-The GitHub Actions release workflow runs the same commands in a matrix
-(`windows-latest`, `macos-latest`, `ubuntu-22.04`). A local green gate is a reliable predictor
-of a clean CI run. Performance budgets (cold start < 1.5 s, 60 fps grid, search < 50 ms) are
-tracked as CI gates — do not regress them.
+| MSVC `/W4` | Unused variable / unreferenced parameter | Prefix with `[[maybe_unused]]` or remove |
+| MSVC `/W4` | Type truncation / signed-unsigned mismatch | Use explicit `static_cast` or size types (`size_t`) |
+| COM Registration | Missing DLL export or registry privilege | Check `DllRegisterServer` exports in `.def` file |
+| Manifest Scanner | File lock or invalid JSON/VDF syntax | Use non-blocking read mode (`FILE_SHARE_READ`) |

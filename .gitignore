@@ -10,22 +10,20 @@ Thumbs.db
 *.sln
 *.sw?
 
-
-# Node
-node_modules
+# CMake & Native C++ Build Artifacts
 /build
-/.svelte-kit
-/package
+/out
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+
+# Environment & Local Scratch
 .env
 .env.*
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-
-# Rust / Tauri
-/src-tauri/target
-/src-tauri/gen/schemas
-
-# Local backups created by Universal Game Launcher
 /scratch
 *.local.json
 
@@ -33,13 +31,6 @@ vite.config.ts.timestamp-*
 /certificates/
 *.pfx
 *.p12
-
-# Jekyll local docs preview (scratch files - not committed)
-/Gemfile
-/Gemfile.lock
-/docs/_site
-/docs/.jekyll-cache
-/.jekyll-cache
 
 # Logging
 logs/*

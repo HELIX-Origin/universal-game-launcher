@@ -7,22 +7,17 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Selected release tag to build and attach assets to (e.g. v1.2.0, leave empty for current package.json version)'
-        required: false
+        description: 'Selected release tag to build and attach assets to (e.g. v2.0.0)'
+        required: true
         type: string
-        default: ''
 
 permissions:
   contents: write
 
 jobs:
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-22.04
-    outputs:
-      release_id: ${{ steps.create_release.outputs.release_id }}
-      tag_name: ${{ steps.create_release.outputs.tag_name }}
-      version_clean: ${{ steps.create_release.outputs.version_clean }}
+  build-and-release:
+    name: Build & Publish Windows Release
+    runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,162 +25,38 @@ jobs:
           token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Create or update release
-        id: create_release
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const path = require('path');
+      - name: Configure CMake
+        run: cmake -B build -S .
 
-            let tag = context.ref.replace('refs/tags/', '');
-            if (!tag || tag.startsWith('refs/heads/')) {
-              tag = (context.payload.inputs && context.payload.inputs.tag) ? context.payload.inputs.tag.trim() : '';
-            }
-            if (!tag) {
-              const pkg = JSON.parse(fs.readFileSync(path.join(process.env.GITHUB_WORKSPACE, 'package.json'), 'utf8'));
-              tag = `v${pkg.version}`;
-            }
-            console.log(`Target release tag: ${tag}`);
+      - name: Build Release (/W4 /WX zero warnings)
+        run: cmake --build build --config Release
 
-            let body = '';
-            const candidatePaths = [
-              path.join(process.env.GITHUB_WORKSPACE, '.github', 'releases', `${tag}.md`),
-              path.join(process.env.GITHUB_WORKSPACE, 'docs', 'releases', `${tag}.md`)
-            ];
-            for (const p of candidatePaths) {
-              if (fs.existsSync(p)) {
-                body = fs.readFileSync(p, 'utf8');
-                console.log(`Loaded release notes from: ${p}`);
-                break;
-              }
-            }
-            if (!body) {
-              const changelogPath = path.join(process.env.GITHUB_WORKSPACE, 'CHANGELOG.md');
-              if (fs.existsSync(changelogPath)) {
-                const raw = fs.readFileSync(changelogPath, 'utf8');
-                const vNum = tag.replace(/^v/, '');
-                const m = raw.match(new RegExp(`## \\[${vNum}\\][\\s\\S]*?(?=\\n## \\[|$)`));
-                if (m) {
-                  body = `# Universal Game Launcher ${tag}\n\n**Release date:** ${new Date().toISOString().slice(0, 10)}\n**Version Type:** Semantic Versioning\n\n${m[0]}`;
-                }
-              }
-            }
-            if (!body) {
-              body = `# Universal Game Launcher ${tag}\n\n**Release date:** ${new Date().toISOString().slice(0, 10)}\n**Version Type:** Semantic Versioning\n\nNext-generation universal gaming hub, multi-platform library manager, and artwork customizer built with Tauri v2.`;
-            }
+      - name: Run C++ Unit Tests
+        run: ctest --test-dir build -C Release --output-on-failure
 
-            let release;
-            try {
-              const res = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: tag
-              });
-              release = res.data;
-              console.log(`Found existing release: ID ${release.id} for tag ${tag}`);
-              if (body) {
-                await github.rest.repos.updateRelease({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  release_id: release.id,
-                  name: `Universal Game Launcher ${tag}`,
-                  body: body,
-                  draft: false,
-                  prerelease: false
-                });
-                console.log(`Updated release ID ${release.id} with release notes`);
-              }
-            } catch (err) {
-              if (err.status === 404) {
-                console.log(`Creating new release for ${tag}`);
-                const res = await github.rest.repos.createRelease({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  tag_name: tag,
-                  name: `Universal Game Launcher ${tag}`,
-                  body: body,
-                  draft: false,
-                  prerelease: false
-                });
-                release = res.data;
-                console.log(`Created release ID ${release.id}`);
-              } else {
-                throw err;
-              }
-            }
-
-            core.setOutput('release_id', release.id.toString());
-            core.setOutput('tag_name', tag);
-            core.setOutput('version_clean', tag.replace(/^v/, ''));
-
-  build-and-upload:
-    name: Build & Upload (${{ matrix.platform }})
-    needs: create-release
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: 'windows-latest'
-            args: '--config src-tauri/tauri.windows.conf.json'
-          - platform: 'macos-latest'
-            args: '--target universal-apple-darwin --config src-tauri/tauri.macos.conf.json'
-          - platform: 'ubuntu-22.04'
-            args: '--config src-tauri/tauri.linux.conf.json'
-
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Checkout target tag ref if exists
-        shell: bash
+      - name: Package Release Archive
+        shell: pwsh
         run: |
-          TARGET_TAG="${{ needs.create-release.outputs.tag_name }}"
-          if git rev-parse -q --verify "refs/tags/${TARGET_TAG}" >/dev/null; then
-            echo "Checking out tag ref: ${TARGET_TAG}"
-            git checkout "${TARGET_TAG}"
-          else
-            echo "Tag ref ${TARGET_TAG} not locally resolved yet, proceeding on current ref"
-          fi
+          $tag = "${{ github.ref_name }}"
+          if ("${{ github.event.inputs.tag }}" -ne "") {
+            $tag = "${{ github.event.inputs.tag }}"
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "build/Release/GameExplorerShell.dll" -Destination dist/ -ErrorAction Stop
+          Copy-Item "build/Release/GameExplorerConfig.exe" -Destination dist/ -ErrorAction Stop
+          if (Test-Path "build/Release/GameExplorerManager.exe") {
+            Copy-Item "build/Release/GameExplorerManager.exe" -Destination dist/
+          }
+          Compress-Archive -Path "dist/*" -DestinationPath "windows-game-explorer-$tag-win64.zip" -Force
+          echo "ARCHIVE=windows-game-explorer-$tag-win64.zip" >> $env:GITHUB_ENV
+          echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          node-version: 22
-          cache: 'npm'
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev xdg-utils
-
-      - name: Install frontend dependencies
-        run: npm ci || npm install
-
-      - name: Build Tauri installer bundles and upload
-        uses: tauri-apps/tauri-action@v0
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Windows Game Explorer ${{ env.RELEASE_TAG }}
+          files: ${{ env.ARCHIVE }}
+          draft: true
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
-        with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          tagName: ${{ needs.create-release.outputs.tag_name }}
-          args: ${{ matrix.args }}
-

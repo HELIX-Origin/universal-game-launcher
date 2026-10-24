@@ -1,56 +1,43 @@
 <div align="center">
 
-<img src="./static/universal-game-launcher.svg" alt="Universal Game Launcher Banner" width="100%" />
-
-# Universal Game Launcher
+# Windows Game Explorer
 
 <p align="center">
-  <a href="https://github.com/HELIX-Origin/universal-game-launcher/releases"><img src="https://img.shields.io/github/v/release/HELIX-Origin/universal-game-launcher?include_prereleases&label=Release&color=blue" alt="Release" height="20" /></a>
-  <a href="https://docs.helix-origin.club/universal-game-launcher/"><img src="https://img.shields.io/badge/Docs-docs.helix--origin.club-brightgreen" alt="Documentation" height="20" /></a>
-  <a href="https://wiki.helix-origin.club/universal-game-launcher/"><img src="https://img.shields.io/badge/Wiki-wiki.helix--origin.club-brightgreen" alt="Technical Wiki" height="20" /></a>
+  <a href="https://github.com/HELIX-Origin/windows-game-explorer/releases"><img src="https://img.shields.io/github/v/release/HELIX-Origin/windows-game-explorer?include_prereleases&label=Release&color=blue" alt="Release" height="20" /></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" height="20" /></a>
-  <a href="https://tauri.app"><img src="https://img.shields.io/badge/Tauri-v2-blue?logo=tauri" alt="Tauri v2" height="20" /></a>
-  <a href="https://svelte.dev"><img src="https://img.shields.io/badge/Svelte-5-orange?logo=svelte" alt="Svelte 5" height="20" /></a>
+  <img src="https://img.shields.io/badge/Platform-Windows%2011-0078D4?logo=windows" alt="Platform: Windows 11" height="20" />
+  <img src="https://img.shields.io/badge/C%2B%2B-20-blue.svg" alt="C++20" height="20" />
 </p>
 
-**A fast, lightweight, privacy-first universal game launcher and library organizer — built with Tauri v2.**
+**A native C++ Windows Game Explorer reviving the classic Windows 7/Vista Game Explorer directly inside Windows 11 File Explorer.**
 
-Organize, categorize, filter, and launch your entire multi-platform game library from a single unified desktop application without scraping or credentials.
+Organize, browse, and launch your entire multi-platform game library with high-resolution box art, rich preview pane, and automated storefront detection without scraping or credentials.
 
 </div>
-
----
-
-## 📖 Primary Gateways
-
-All comprehensive user guides, developer tutorials, and architecture specifications are centrally hosted:
-
-- 📖 **Documentation**: [docs.helix-origin.club/universal-game-launcher](https://docs.helix-origin.club/universal-game-launcher/) — User manuals, feature walkthroughs, and configuration.
-- 🧠 **Technical Wiki**: [wiki.helix-origin.club/universal-game-launcher](https://wiki.helix-origin.club/universal-game-launcher/) — Plugin development, provider schemas, and internal APIs.
-- 🌐 **Organization Portal**: [www.helix-origin.club](https://www.helix-origin.club/) — HELIX Origin organization hub.
 
 ---
 
 ## ⚡ Quick Start
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v20+)
-- [Rust](https://www.rust-lang.org/) (1.80+)
+- Windows 11 (Build 22000+)
+- Visual Studio 2022 / Build Tools (C++20 MSVC v143+)
+- CMake 3.25+
 
-### Running Locally
-```bash
-npm install
-npm run tauri dev
+### Building Locally
+```powershell
+cmake -B build -S .
+cmake --build build --config Release
 ```
 
-### Verification & Quality Gate
-```bash
-npm test                 # cargo check + cargo test + svelte-check
+### Running Tests
+```powershell
+.\build\tests\Release\GameExplorerTests.exe
 ```
 
 ---
 
-## 🤝 Community
+## 🤝 Community & Governance
 
 - [Contributing](./CONTRIBUTING.md) · [Code of Conduct](./CODE_OF_CONDUCT.md) · [Support](./SUPPORT.md)
 - [Security Policy](./SECURITY.md) · [Privacy Policy](./PRIVACY.md) · [Terms of Service](./TOS.md)
@@ -61,4 +48,3 @@ npm test                 # cargo check + cargo test + svelte-check
 ## ⚖️ License
 
 [MIT](LICENSE) — Copyright (c) 2026, HELIX Origin.
-

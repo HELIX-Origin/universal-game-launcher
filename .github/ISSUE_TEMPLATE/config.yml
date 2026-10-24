@@ -1,14 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 📖 Documentation
-    url: https://docs.helix-origin.club/{universal-game-launcher}/
-    about: Installation, setup, and usage guides.
-  - name: 🧠 Technical Wiki
-    url: https://wiki.helix-origin.club/{universal-game-launcher}/
-    about: Architecture, internals, and developer references.
   - name: 💬 Discussions
-    url: https://github.com/HELIX-Origin/{universal-game-launcher}/discussions
+    url: https://github.com/HELIX-Origin/windows-game-explorer/discussions
     about: Ask questions and share ideas with the community.
   - name: 🔒 Security
-    url: https://github.com/HELIX-Origin/{universal-game-launcher}/security
+    url: https://github.com/HELIX-Origin/windows-game-explorer/security
     about: Report a security vulnerability privately (do not open a public issue).
