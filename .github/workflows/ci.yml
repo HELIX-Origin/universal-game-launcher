@@ -22,11 +22,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure CMake
-        run: cmake -B build -S .
-
       - name: Build Release (/W4 /WX zero warnings)
-        run: cmake --build build --config Release
+        shell: pwsh
+        run: ./scripts/build.ps1 -Configuration Release
 
       - name: Run C++ Unit Tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: pwsh
+        run: ./scripts/test.ps1 -Configuration Release

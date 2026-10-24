@@ -63,3 +63,29 @@ TEST_CASE(PerGameMetadataSerializationAndPriority) {
         fs::remove(jsonPath);
     }
 }
+
+TEST_CASE(CustomLocalGameLifecycle) {
+    const fs::path tempExe = fs::temp_directory_path() / L"GameExplorer_CustomTestGame.exe";
+    {
+        std::ofstream stub(tempExe);
+        stub << "MZ";
+    }
+
+    ASSERT_TRUE(GameExplorer::StorefrontScanner::AddCustomLocalGame(tempExe.wstring(), L"Custom Local Test Game"));
+
+    const auto customGames = GameExplorer::StorefrontScanner::ScanCustomGames();
+    std::wstring createdAppId;
+    for (const auto& g : customGames) {
+        if (g.title == L"Custom Local Test Game") {
+            createdAppId = g.appId;
+            break;
+        }
+    }
+
+    ASSERT_FALSE(createdAppId.empty());
+    ASSERT_TRUE(GameExplorer::StorefrontScanner::RemoveCustomLocalGame(createdAppId));
+
+    if (fs::exists(tempExe)) {
+        fs::remove(tempExe);
+    }
+}

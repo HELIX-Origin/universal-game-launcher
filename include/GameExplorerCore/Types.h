@@ -51,7 +51,15 @@ enum class PlatformType : uint32_t {
     SquareEnix = 12,
     Ubisoft = 13,
     Rockstar = 14,
-    Amazon = 15
+    Amazon = 15,
+    LegacyGames = 16,
+    Jagex = 17,
+    XIVLauncher = 18,
+    GuildWars2 = 19,
+    Riot = 20,
+    HoYoPlay = 21,
+    Paradox = 22,
+    ESDE = 23
 };
 
 [[nodiscard]] constexpr std::wstring_view PlatformToString(PlatformType platform) noexcept {
@@ -84,6 +92,22 @@ enum class PlatformType : uint32_t {
         return L"Rockstar Games";
     case PlatformType::Amazon:
         return L"Amazon Games";
+    case PlatformType::LegacyGames:
+        return L"Legacy Games";
+    case PlatformType::Jagex:
+        return L"Jagex Launcher";
+    case PlatformType::XIVLauncher:
+        return L"XIVLauncher";
+    case PlatformType::GuildWars2:
+        return L"Guild Wars 2";
+    case PlatformType::Riot:
+        return L"Riot Client";
+    case PlatformType::HoYoPlay:
+        return L"HoYoPlay";
+    case PlatformType::Paradox:
+        return L"Paradox Launcher";
+    case PlatformType::ESDE:
+        return L"ES-DE";
     case PlatformType::CustomExecutable:
         return L"Standalone";
     default:
@@ -100,9 +124,17 @@ enum class PlatformType : uint32_t {
     if (str == L"Xbox" || str == L"Microsoft Store") return PlatformType::Xbox;
     if (str == L"itch.io" || str == L"itch") return PlatformType::Itch;
     if (str == L"Square Enix") return PlatformType::SquareEnix;
-    if (str == L"Ubisoft" || str == L"Uplay") return PlatformType::Ubisoft;
+    if (str == L"Ubisoft" || str == L"Uplay" || str == L"Ubisoft Connect") return PlatformType::Ubisoft;
     if (str == L"Rockstar Games" || str == L"Rockstar") return PlatformType::Rockstar;
     if (str == L"Amazon Games" || str == L"Amazon") return PlatformType::Amazon;
+    if (str == L"Legacy Games") return PlatformType::LegacyGames;
+    if (str == L"Jagex Launcher" || str == L"Jagex") return PlatformType::Jagex;
+    if (str == L"XIVLauncher") return PlatformType::XIVLauncher;
+    if (str == L"Guild Wars 2") return PlatformType::GuildWars2;
+    if (str == L"Riot Client" || str == L"Riot Games") return PlatformType::Riot;
+    if (str == L"HoYoPlay" || str == L"HoYoverse") return PlatformType::HoYoPlay;
+    if (str == L"Paradox Launcher" || str == L"Paradox") return PlatformType::Paradox;
+    if (str == L"ES-DE") return PlatformType::ESDE;
     if (str == L"RetroArch") return PlatformType::RetroArch;
     if (str == L"RPCS3") return PlatformType::RPCS3;
     if (str == L"Dolphin") return PlatformType::Dolphin;

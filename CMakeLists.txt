@@ -43,6 +43,7 @@ add_library(GameExplorerCore STATIC
     src/core/DarkMode.cpp
     src/core/StorefrontScanner.cpp
     src/core/PlatformLauncher.cpp
+    src/core/Localization.cpp
 )
 target_include_directories(GameExplorerCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -56,6 +57,9 @@ target_link_libraries(GameExplorerCore PUBLIC
     Advapi32
     Dwmapi
     Uxtheme
+    Urlmon
+    Winhttp
+    Version
 )
 
 # Shell Extension DLL
@@ -85,6 +89,7 @@ target_link_libraries(GameExplorerShell PRIVATE
     Uxtheme
     Gdiplus
     Propsys
+    WindowsApp
 )
 
 # Standalone Configuration Utility
@@ -104,6 +109,27 @@ target_link_libraries(GameExplorerConfig PRIVATE
     Advapi32
     Dwmapi
     Uxtheme
+)
+
+# Standalone Game Explorer Manager (GEM) Utility
+add_executable(GameExplorerManager WIN32
+    src/manager/ManagerMain.cpp
+    src/shell/Resource.rc
+)
+target_include_directories(GameExplorerManager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/manager
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/shell
+)
+target_link_libraries(GameExplorerManager PRIVATE
+    GameExplorerCore
+    Comctl32
+    Comdlg32
+    Shell32
+    Advapi32
+    Dwmapi
+    Uxtheme
+    Gdiplus
 )
 
 # ==============================================================================

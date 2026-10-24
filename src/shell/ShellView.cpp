@@ -6,6 +6,25 @@
 #include "GameExplorerCore/Settings.h"
 #include "GameExplorerCore/StorefrontScanner.h"
 #include "GameExplorerCore/PlatformLauncher.h"
+#include "GameExplorerCore/Localization.h"
+
+#ifdef GetCurrentTime
+#undef GetCurrentTime
+#endif
+
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.UI.h>
+#include <winrt/Windows.UI.Text.h>
+#include <winrt/Windows.UI.Xaml.h>
+#include <winrt/Windows.UI.Xaml.Hosting.h>
+#include <winrt/Windows.UI.Xaml.Controls.h>
+#include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
+#include <winrt/Windows.UI.Xaml.Media.h>
+#include <winrt/Windows.UI.Xaml.Media.Imaging.h>
+#include <winrt/Windows.UI.Xaml.Input.h>
+#include <windows.ui.xaml.hosting.desktopwindowxamlsource.h>
+
 #include <algorithm>
 #include <mutex>
 #include <gdiplus.h>
@@ -21,13 +40,18 @@ namespace fs = std::filesystem;
 extern std::atomic<ULONG> g_dllRefCount;
 extern HINSTANCE g_hInstance;
 
+namespace wux = winrt::Windows::UI::Xaml;
+namespace wuxc = winrt::Windows::UI::Xaml::Controls;
+namespace wuxm = winrt::Windows::UI::Xaml::Media;
+namespace wuxmi = winrt::Windows::UI::Xaml::Media::Imaging;
+namespace wuxi = winrt::Windows::UI::Xaml::Input;
+namespace wf = winrt::Windows::Foundation;
+
 namespace GameExplorer {
 
 namespace {
 
-constexpr const wchar_t* VIEW_CLASS_NAME = L"GameExplorerShellViewClass";
-constexpr const wchar_t* DRAWER_CLASS_NAME = L"GameExplorerDrawerClass";
-constexpr int IDC_LAUNCH_BTN = 1001;
+constexpr const wchar_t* VIEW_CLASS_NAME = L"GameExplorerXamlHostViewClass";
 
 std::wstring FormatDiskSize(uint64_t bytes) {
     if (bytes == 0) return L"";
@@ -52,29 +76,136 @@ void EnsureGdiplusInitialized() {
     });
 }
 
+bool GetPngEncoderClsid(CLSID* pClsid) {
+    UINT num = 0;
+    UINT size = 0;
+    Gdiplus::GetImageEncodersSize(&num, &size);
+    if (size == 0) return false;
+
+    std::vector<BYTE> buf(size);
+    auto* pImageCodecInfo = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.data());
+    Gdiplus::GetImageEncoders(num, size, pImageCodecInfo);
+
+    for (UINT j = 0; j < num; ++j) {
+        if (wcscmp(pImageCodecInfo[j].MimeType, L"image/png") == 0) {
+            *pClsid = pImageCodecInfo[j].Clsid;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Extracts a high-res icon from an .exe or .ico and saves it as a .png in cache/art/ so XAML BitmapImage can load it
+std::wstring EnsureExtractedIconPng(const std::wstring& cacheKey, const std::wstring& sourceExeOrIco) {
+    if (sourceExeOrIco.empty() || !fs::exists(sourceExeOrIco)) return L"";
+
+    const auto ext = fs::path(sourceExeOrIco).extension().wstring();
+    if (_wcsicmp(ext.c_str(), L".png") == 0 ||
+        _wcsicmp(ext.c_str(), L".jpg") == 0 ||
+        _wcsicmp(ext.c_str(), L".jpeg") == 0 ||
+        _wcsicmp(ext.c_str(), L".gif") == 0 ||
+        _wcsicmp(ext.c_str(), L".webp") == 0 ||
+        _wcsicmp(ext.c_str(), L".bmp") == 0) {
+        return sourceExeOrIco;
+    }
+
+    Storage::EnsureDirectoriesCreated();
+    const fs::path outDir = Storage::GetArtPath();
+    std::error_code ec;
+    fs::create_directories(outDir, ec);
+
+    std::wstring safeKey = cacheKey;
+    for (auto& ch : safeKey) {
+        if (!iswalnum(ch) && ch != L'_' && ch != L'-') ch = L'_';
+    }
+    const fs::path pngPath = outDir / (L"icon_" + safeKey + L".png");
+    if (fs::exists(pngPath, ec) && fs::file_size(pngPath, ec) > 0) {
+        return pngPath.wstring();
+    }
+
+    HICON hIcon = nullptr;
+    if (FAILED(SHDefExtractIconW(sourceExeOrIco.c_str(), 0, 0, &hIcon, nullptr, 128)) || hIcon == nullptr) {
+        ExtractIconExW(sourceExeOrIco.c_str(), 0, &hIcon, nullptr, 1);
+    }
+    if (hIcon == nullptr) return L"";
+
+    constexpr int iconDim = 128;
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = iconDim;
+    bi.bmiHeader.biHeight = iconDim;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    void* pBits = nullptr;
+    HDC hdcScreen = GetDC(nullptr);
+    HBITMAP hDib = CreateDIBSection(hdcScreen, &bi, DIB_RGB_COLORS, &pBits, nullptr, 0);
+    ReleaseDC(nullptr, hdcScreen);
+
+    if (hDib != nullptr) {
+        HDC hdcMem = CreateCompatibleDC(nullptr);
+        HGDIOBJ hOld = SelectObject(hdcMem, hDib);
+        DrawIconEx(hdcMem, 0, 0, hIcon, iconDim, iconDim, 0, nullptr, DI_NORMAL);
+        SelectObject(hdcMem, hOld);
+        DeleteDC(hdcMem);
+
+        Gdiplus::Bitmap bmp(iconDim, iconDim, iconDim * 4, PixelFormat32bppARGB, static_cast<BYTE*>(pBits));
+        bmp.RotateFlip(Gdiplus::RotateNoneFlipY);
+        CLSID pngClsid{};
+        if (GetPngEncoderClsid(&pngClsid)) {
+            bmp.Save(pngPath.c_str(), &pngClsid, nullptr);
+        }
+        DeleteObject(hDib);
+    }
+
+    DestroyIcon(hIcon);
+    return fs::exists(pngPath, ec) ? pngPath.wstring() : L"";
+}
+
+wuxm::SolidColorBrush MakeBrush(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
+    return wuxm::SolidColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(a, r, g, b));
+}
+
+wuxmi::BitmapImage LoadLocalBitmap(const std::wstring& filePath) {
+    if (filePath.empty()) return nullptr;
+    const bool isRemoteUri = (filePath.rfind(L"http://", 0) == 0 || filePath.rfind(L"https://", 0) == 0);
+    if (!isRemoteUri) {
+        std::error_code ec;
+        if (!fs::exists(filePath, ec)) return nullptr;
+    }
+    try {
+        wuxmi::BitmapImage bmp;
+        bmp.AutoPlay(true);
+        bmp.UriSource(wf::Uri(filePath));
+        return bmp;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 } // namespace
 
+struct ShellView::XamlState {
+    wux::Hosting::WindowsXamlManager xamlManager{ nullptr };
+    wux::Hosting::DesktopWindowXamlSource xamlSource{ nullptr };
+    wuxc::Grid rootGrid{ nullptr };
+    wuxc::Border sidepaneHost{ nullptr };
+};
+
 ShellView::ShellView(ShellFolder* pFolder)
-    : m_pFolder(pFolder) {
+    : m_pFolder(pFolder), m_xaml(std::make_unique<XamlState>()) {
     ++g_dllRefCount;
     if (m_pFolder != nullptr) {
         m_pFolder->AddRef();
     }
-
     EnsureGdiplusInitialized();
     DarkMode::Initialize();
-    InitializeFonts();
-    UpdateThemeState();
+    m_isDarkMode = DarkMode::IsSystemDarkMode();
+    m_layoutMode = SettingsManager::GetLayoutMode();
 }
 
 ShellView::~ShellView() {
-    FreeCachedCover();
-    CleanupFonts();
-    if (m_hDrawerBrush != nullptr) {
-        DeleteObject(m_hDrawerBrush);
-        m_hDrawerBrush = nullptr;
-    }
-
     if (m_pFolder != nullptr) {
         m_pFolder->Release();
         m_pFolder = nullptr;
@@ -82,114 +213,6 @@ ShellView::~ShellView() {
     --g_dllRefCount;
 }
 
-void ShellView::UpdateCachedCover(const GameItem& game) {
-    if (game.id == m_cachedCoverGameId && m_hCachedCoverBmp != nullptr) {
-        return;
-    }
-    FreeCachedCover();
-    m_cachedCoverGameId = game.id;
-
-    std::wstring imgPath = game.coverArtPath;
-    if (imgPath.empty() || !fs::exists(imgPath)) {
-        imgPath = game.heroArtPath;
-    }
-    if (imgPath.empty() || !fs::exists(imgPath)) {
-        return;
-    }
-
-    // Safely decode and convert to standard GDI HBITMAP outside of WM_PAINT
-    Gdiplus::Bitmap bmp(imgPath.c_str());
-    if (bmp.GetLastStatus() == Gdiplus::Ok) {
-        HBITMAP hBmp = nullptr;
-        Gdiplus::Color bg(0, 0, 0, 0);
-        if (bmp.GetHBITMAP(bg, &hBmp) == Gdiplus::Ok) {
-            m_hCachedCoverBmp = hBmp;
-        }
-    }
-}
-
-void ShellView::FreeCachedCover() {
-    if (m_hCachedCoverBmp != nullptr) {
-        DeleteObject(m_hCachedCoverBmp);
-        m_hCachedCoverBmp = nullptr;
-    }
-    m_cachedCoverGameId = -1;
-}
-
-void ShellView::InitializeFonts() {
-    m_hFontDrawerTitle = CreateFontW(
-        -20, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text"
-    );
-    if (m_hFontDrawerTitle == nullptr) {
-        m_hFontDrawerTitle = CreateFontW(-20, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    }
-
-    m_hFontTitle = CreateFontW(
-        -14, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text"
-    );
-    if (m_hFontTitle == nullptr) {
-        m_hFontTitle = CreateFontW(-14, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    }
-
-    m_hFontBody = CreateFontW(
-        -13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text"
-    );
-    if (m_hFontBody == nullptr) {
-        m_hFontBody = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    }
-
-    m_hFontSub = CreateFontW(
-        -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text"
-    );
-    if (m_hFontSub == nullptr) {
-        m_hFontSub = CreateFontW(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    }
-}
-
-void ShellView::CleanupFonts() {
-    if (m_hFontDrawerTitle) { DeleteObject(m_hFontDrawerTitle); m_hFontDrawerTitle = nullptr; }
-    if (m_hFontTitle) { DeleteObject(m_hFontTitle); m_hFontTitle = nullptr; }
-    if (m_hFontBody) { DeleteObject(m_hFontBody); m_hFontBody = nullptr; }
-    if (m_hFontSub) { DeleteObject(m_hFontSub); m_hFontSub = nullptr; }
-}
-
-void ShellView::UpdateThemeState() {
-    m_isDarkMode = DarkMode::IsSystemDarkMode();
-    m_palette = DarkMode::GetPalette(m_isDarkMode);
-
-    if (m_hDrawerBrush != nullptr) {
-        DeleteObject(m_hDrawerBrush);
-    }
-    m_hDrawerBrush = CreateSolidBrush(m_palette.drawerBg);
-
-    if (m_hwndView != nullptr) {
-        DarkMode::ApplyWindowTheme(m_hwndView, m_isDarkMode);
-    }
-    if (m_hwndDrawer != nullptr) {
-        DarkMode::ApplyWindowTheme(m_hwndDrawer, m_isDarkMode);
-    }
-    if (m_hwndLaunchBtn != nullptr) {
-        DarkMode::ApplyWindowTheme(m_hwndLaunchBtn, m_isDarkMode);
-    }
-}
-
-// IUnknown
 IFACEMETHODIMP ShellView::QueryInterface(REFIID riid, void** ppv) {
     if (ppv == nullptr) return E_POINTER;
     *ppv = nullptr;
@@ -220,7 +243,6 @@ IFACEMETHODIMP_(ULONG) ShellView::Release() {
     return count;
 }
 
-// IOleWindow
 IFACEMETHODIMP ShellView::GetWindow(HWND* phwnd) {
     if (phwnd == nullptr) return E_POINTER;
     *phwnd = m_hwndView;
@@ -231,7 +253,6 @@ IFACEMETHODIMP ShellView::ContextSensitiveHelp(BOOL /*fEnterMode*/) {
     return E_NOTIMPL;
 }
 
-// IShellView
 IFACEMETHODIMP ShellView::TranslateAccelerator(MSG* /*pmsg*/) {
     return S_FALSE;
 }
@@ -244,82 +265,859 @@ IFACEMETHODIMP ShellView::UIActivate(UINT uState) {
     if (m_uState == uState) {
         return S_OK;
     }
-
     const UINT oldState = m_uState;
     m_uState = uState;
-
-    if (uState != SVUIA_DEACTIVATE) {
-        if (oldState == SVUIA_DEACTIVATE && m_pShellBrowser != nullptr) {
-            m_pShellBrowser->OnViewWindowActive(this);
-        }
-    }
-    return S_OK;
-}
-
-IFACEMETHODIMP ShellView::Refresh() {
-    RefreshData();
-    UpdateScrollMetrics();
-    if (m_hwndView != nullptr) {
-        InvalidateRect(m_hwndView, nullptr, TRUE);
-    }
-    if (m_hwndDrawer != nullptr) {
-        InvalidateRect(m_hwndDrawer, nullptr, TRUE);
+    if (uState != SVUIA_DEACTIVATE && oldState == SVUIA_DEACTIVATE && m_pShellBrowser != nullptr) {
+        m_pShellBrowser->OnViewWindowActive(this);
     }
     return S_OK;
 }
 
 void ShellView::RefreshData() {
+    m_isDarkMode = DarkMode::IsSystemDarkMode();
+    m_layoutMode = SettingsManager::GetLayoutMode();
+
+    m_providers.clear();
+    auto addProviderIfInstalled = [&](PlatformType plat, const wchar_t* name, const wchar_t* company, const std::wstring& exe, const std::wstring& iconOverride = L"") {
+        if (exe.empty() || !fs::exists(exe)) return;
+        ProviderViewModel p{};
+        p.platform = plat;
+        p.name = name;
+        p.company = company;
+        p.executablePath = exe;
+        p.iconPngPath = EnsureExtractedIconPng(std::wstring(L"prov_") + name, iconOverride.empty() ? exe : iconOverride);
+        m_providers.push_back(std::move(p));
+    };
+
+    addProviderIfInstalled(PlatformType::Steam,       L"Steam",           L"Valve Corporation",      PlatformLauncher::GetSteamExecutablePath());
+    addProviderIfInstalled(PlatformType::Epic,        L"Epic Games",      L"Epic Games, Inc.",       PlatformLauncher::GetEpicExecutablePath());
+    addProviderIfInstalled(PlatformType::GOG,         L"GOG GALAXY",      L"CD PROJEKT / GOG",       PlatformLauncher::GetGOGGalaxyExecutablePath());
+    addProviderIfInstalled(PlatformType::Xbox,        L"Xbox",            L"Microsoft Corporation",  PlatformLauncher::GetXboxExecutablePath(), PlatformLauncher::GetXboxIconPath());
+    addProviderIfInstalled(PlatformType::BattleNet,   L"Battle.net",      L"Blizzard Entertainment", PlatformLauncher::GetBattleNetExecutablePath());
+    addProviderIfInstalled(PlatformType::Ubisoft,     L"Ubisoft Connect", L"Ubisoft",                PlatformLauncher::GetUbisoftExecutablePath());
+    addProviderIfInstalled(PlatformType::EAApp,       L"EA App",          L"Electronic Arts",        PlatformLauncher::GetEAAppExecutablePath());
+    addProviderIfInstalled(PlatformType::Itch,        L"itch.io",         L"itch corp.",             PlatformLauncher::GetItchExecutablePath());
+    addProviderIfInstalled(PlatformType::Amazon,      L"Amazon Games",    L"Amazon.com, Inc.",       PlatformLauncher::GetAmazonExecutablePath());
+    addProviderIfInstalled(PlatformType::LegacyGames, L"Legacy Games",    L"Legacy Games, Inc.",     PlatformLauncher::GetLegacyGamesExecutablePath());
+    addProviderIfInstalled(PlatformType::Jagex,       L"Jagex Launcher",  L"Jagex Ltd",              PlatformLauncher::GetJagexExecutablePath());
+    addProviderIfInstalled(PlatformType::XIVLauncher, L"XIVLauncher",     L"Goatcorp / FFXIV",       PlatformLauncher::GetXIVLauncherExecutablePath());
+    addProviderIfInstalled(PlatformType::GuildWars2,  L"Guild Wars 2",    L"ArenaNet",               PlatformLauncher::GetGuildWars2ExecutablePath());
+    addProviderIfInstalled(PlatformType::Rockstar,    L"Rockstar Games",  L"Rockstar Games",         PlatformLauncher::GetRockstarExecutablePath());
+    addProviderIfInstalled(PlatformType::Riot,        L"Riot Client",     L"Riot Games",             PlatformLauncher::GetRiotExecutablePath());
+    addProviderIfInstalled(PlatformType::HoYoPlay,    L"HoYoPlay",        L"COGNOSPHERE",            PlatformLauncher::GetHoYoPlayExecutablePath());
+    addProviderIfInstalled(PlatformType::Paradox,     L"Paradox Launcher",L"Paradox Interactive",    PlatformLauncher::GetParadoxExecutablePath());
+    addProviderIfInstalled(PlatformType::ESDE,        L"ES-DE",           L"EmulationStation DE",    PlatformLauncher::GetESDEExecutablePath());
+
     m_games = StorefrontScanner::ScanAllInstalledGames();
+    for (auto& g : m_games) {
+        if (g.iconPath.empty() && !g.executablePath.empty()) {
+            g.iconPath = EnsureExtractedIconPng(g.appId, g.executablePath);
+        } else if (!g.iconPath.empty()) {
+            g.iconPath = EnsureExtractedIconPng(g.appId, g.iconPath);
+        }
+    }
 
-    if (m_selectedIndex >= static_cast<int>(m_games.size())) {
-        m_selectedIndex = -1;
-        FreeCachedCover();
-    } else if (m_selectedIndex >= 0) {
-        UpdateCachedCover(m_games[m_selectedIndex]);
+    if (m_selectedGameIndex >= static_cast<int>(m_games.size())) {
+        m_selectedGameIndex = -1;
+    }
+    if (m_selectedProviderIndex >= static_cast<int>(m_providers.size())) {
+        m_selectedProviderIndex = -1;
     }
 }
 
-void ShellView::UpdateScrollMetrics() {
-    if (m_hwndView == nullptr) return;
-
-    RECT rc;
-    GetClientRect(m_hwndView, &rc);
-    const int viewH = rc.bottom - rc.top;
-
-    constexpr int rowH = 38;
-    constexpr int headerH = 34;
-    m_contentHeight = headerH + static_cast<int>(m_games.size()) * rowH + 20;
-
-    SCROLLINFO si{};
-    si.cbSize = sizeof(si);
-    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-    si.nMin = 0;
-    si.nMax = m_contentHeight;
-    si.nPage = static_cast<UINT>(viewH);
-    si.nPos = m_scrollY;
-    SetScrollInfo(m_hwndView, SB_VERT, &si, FALSE);
-
-    const int maxScroll = std::max(0, m_contentHeight - viewH);
-    if (m_scrollY > maxScroll) {
-        m_scrollY = maxScroll;
-        SetScrollPos(m_hwndView, SB_VERT, m_scrollY, FALSE);
+void ShellView::LaunchCompanionExe(const wchar_t* exeName, const std::wstring& args) {
+    wchar_t dllPath[MAX_PATH] = { 0 };
+    if (GetModuleFileNameW(g_hInstance, dllPath, MAX_PATH) > 0) {
+        const fs::path dir = fs::path(dllPath).parent_path();
+        const fs::path targetExe = dir / exeName;
+        if (fs::exists(targetExe)) {
+            ShellExecuteW(m_hwndView, L"open", targetExe.c_str(), args.empty() ? nullptr : args.c_str(), dir.c_str(), SW_SHOWNORMAL);
+        }
     }
 }
 
-void ShellView::ScrollTo(int newY) {
-    if (m_hwndView == nullptr) return;
+void ShellView::SwitchLayoutMode(LayoutMode mode) {
+    m_layoutMode = mode;
+    SettingsManager::SetLayoutMode(mode);
+    BuildXamlViewport();
+}
 
-    RECT rc;
-    GetClientRect(m_hwndView, &rc);
-    const int viewH = rc.bottom - rc.top;
-    const int maxScroll = std::max(0, m_contentHeight - viewH);
-    newY = std::clamp(newY, 0, maxScroll);
+void ShellView::RebuildSidepane() {
+    if (!m_xaml || !m_xaml->sidepaneHost) return;
 
-    if (newY != m_scrollY) {
-        m_scrollY = newY;
-        SetScrollPos(m_hwndView, SB_VERT, m_scrollY, TRUE);
-        InvalidateRect(m_hwndView, nullptr, TRUE);
+    const auto bgDrawer    = m_isDarkMode ? MakeBrush(255, 28, 28, 28)   : MakeBrush(255, 246, 246, 246);
+    const auto bgCard      = m_isDarkMode ? MakeBrush(255, 38, 38, 38)   : MakeBrush(255, 255, 255, 255);
+    const auto borderBrush = m_isDarkMode ? MakeBrush(255, 55, 55, 55)   : MakeBrush(255, 224, 224, 224);
+    const auto textPrimary = m_isDarkMode ? MakeBrush(255, 255, 255, 255): MakeBrush(255, 24, 24, 24);
+    const auto textSec     = m_isDarkMode ? MakeBrush(255, 175, 175, 175): MakeBrush(255, 96, 96, 96);
+    const auto accentBrush = MakeBrush(255, 124, 58, 237);
+    const auto whiteBrush  = MakeBrush(255, 255, 255, 255);
+
+    m_xaml->sidepaneHost.Background(bgDrawer);
+    m_xaml->sidepaneHost.BorderBrush(borderBrush);
+    m_xaml->sidepaneHost.BorderThickness(wux::ThicknessHelper::FromLengths(1, 0, 0, 0));
+
+    wuxc::ScrollViewer scroll;
+    scroll.VerticalScrollBarVisibility(wuxc::ScrollBarVisibility::Auto);
+
+    wuxc::StackPanel stack;
+    stack.Padding(wux::ThicknessHelper::FromUniformLength(20));
+    stack.Spacing(14);
+
+    // Case 1: A Game is selected
+    if (m_selectedGameIndex >= 0 && m_selectedGameIndex < static_cast<int>(m_games.size())) {
+        const auto& game = m_games[static_cast<size_t>(m_selectedGameIndex)];
+
+        // Artwork Preview Card
+        wuxc::Border artCard;
+        artCard.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(8));
+        artCard.Background(bgCard);
+        artCard.BorderBrush(borderBrush);
+        artCard.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        artCard.Height(240);
+
+        std::wstring previewPath = !game.coverArtPath.empty() ? game.coverArtPath : (!game.heroArtPath.empty() ? game.heroArtPath : game.iconPath);
+        if (auto bmp = LoadLocalBitmap(previewPath)) {
+            wuxc::Image img;
+            img.Source(bmp);
+            if (!game.coverArtPath.empty() || !game.heroArtPath.empty()) {
+                img.Stretch(wuxm::Stretch::Uniform);
+            } else {
+                img.Width(96);
+                img.Height(96);
+                img.HorizontalAlignment(wux::HorizontalAlignment::Center);
+                img.VerticalAlignment(wux::VerticalAlignment::Center);
+            }
+            artCard.Child(img);
+        }
+        stack.Children().Append(artCard);
+
+        // Title
+        wuxc::TextBlock titleTb;
+        titleTb.Text(game.title);
+        titleTb.FontSize(20);
+        titleTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        titleTb.Foreground(textPrimary);
+        titleTb.TextWrapping(wux::TextWrapping::Wrap);
+        stack.Children().Append(titleTb);
+
+        // Platform Badge
+        wuxc::Border pill;
+        pill.Background(MakeBrush(45, 124, 58, 237));
+        pill.BorderBrush(accentBrush);
+        pill.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        pill.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(4));
+        pill.Padding(wux::ThicknessHelper::FromLengths(8, 3, 8, 3));
+        pill.HorizontalAlignment(wux::HorizontalAlignment::Left);
+
+        wuxc::TextBlock pillTb;
+        pillTb.Text(std::wstring(PlatformToString(game.platform)));
+        pillTb.FontSize(12);
+        pillTb.Foreground(textPrimary);
+        pill.Child(pillTb);
+        stack.Children().Append(pill);
+
+        // Primary Play Button
+        wuxc::Button playBtn;
+        playBtn.Content(winrt::box_value(L"\u25B6  Play Game"));
+        playBtn.HorizontalAlignment(wux::HorizontalAlignment::Stretch);
+        playBtn.Background(accentBrush);
+        playBtn.Foreground(whiteBrush);
+        playBtn.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+        playBtn.Padding(wux::ThicknessHelper::FromLengths(12, 9, 12, 9));
+        const int idx = m_selectedGameIndex;
+        playBtn.Click([this, idx](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+            if (idx >= 0 && idx < static_cast<int>(m_games.size())) {
+                PlatformLauncher::Launch(m_hwndView, m_games[static_cast<size_t>(idx)]);
+            }
+        });
+        stack.Children().Append(playBtn);
+
+        // Edit in Game Explorer Manager Button
+        wuxc::Button editBtn;
+        editBtn.Content(winrt::box_value(L"\u270E  Edit in Game Explorer Manager"));
+        editBtn.HorizontalAlignment(wux::HorizontalAlignment::Stretch);
+        editBtn.Background(bgCard);
+        editBtn.Foreground(textPrimary);
+        editBtn.BorderBrush(borderBrush);
+        editBtn.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        editBtn.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+        editBtn.Padding(wux::ThicknessHelper::FromLengths(12, 8, 12, 8));
+        const std::wstring appId = game.appId;
+        editBtn.Click([this, appId](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+            LaunchCompanionExe(L"GameExplorerManager.exe", appId);
+        });
+        stack.Children().Append(editBtn);
+
+        // Open Game Folder Button
+        if (!game.workingDirectory.empty() && fs::exists(game.workingDirectory)) {
+            wuxc::Button dirBtn;
+            dirBtn.Content(winrt::box_value(L"\U0001F4C2  Open Install Directory"));
+            dirBtn.HorizontalAlignment(wux::HorizontalAlignment::Stretch);
+            dirBtn.Background(bgCard);
+            dirBtn.Foreground(textPrimary);
+            dirBtn.BorderBrush(borderBrush);
+            dirBtn.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+            dirBtn.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+            dirBtn.Padding(wux::ThicknessHelper::FromLengths(12, 8, 12, 8));
+            const std::wstring workDir = game.workingDirectory;
+            dirBtn.Click([workDir](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+                ShellExecuteW(nullptr, L"open", workDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            });
+            stack.Children().Append(dirBtn);
+        }
+
+        // Metadata Specs
+        auto addMetaRow = [&](const wchar_t* label, const std::wstring& val) {
+            if (val.empty()) return;
+            wuxc::StackPanel row;
+            row.Spacing(2);
+            wuxc::TextBlock lbl;
+            lbl.Text(label);
+            lbl.FontSize(11);
+            lbl.Foreground(textSec);
+            wuxc::TextBlock vTb;
+            vTb.Text(val);
+            vTb.FontSize(13);
+            vTb.Foreground(textPrimary);
+            vTb.TextWrapping(wux::TextWrapping::Wrap);
+            row.Children().Append(lbl);
+            row.Children().Append(vTb);
+            stack.Children().Append(row);
+        };
+
+        const auto& loc = Localization::GetStrings();
+        addMetaRow(loc.labelDeveloper, game.developer.empty() ? loc.unknownDeveloper : game.developer);
+        addMetaRow(loc.labelPublisher, game.publisher.empty() ? std::wstring(PlatformToString(game.platform)) : game.publisher);
+        addMetaRow(loc.labelReleaseDate, game.releaseDate);
+        addMetaRow(loc.labelGenres, game.genres);
+        addMetaRow(loc.labelRating, game.rating.empty() ? loc.unrated : game.rating);
+        if (game.playtimeMinutes > 0) {
+            const uint32_t hrs = game.playtimeMinutes / 60;
+            const uint32_t mins = game.playtimeMinutes % 60;
+            const std::wstring playStr = hrs > 0
+                ? (std::to_wstring(hrs) + L"h " + std::to_wstring(mins) + L"m")
+                : (std::to_wstring(mins) + L"m");
+            addMetaRow(loc.labelPlayTime, playStr);
+        }
+        addMetaRow(L"SIZE ON DISK", FormatDiskSize(game.diskSizeBytes));
+        addMetaRow(loc.labelSynopsis, game.synopsis);
     }
+    // Case 2: A Game Provider is selected
+    else if (m_selectedProviderIndex >= 0 && m_selectedProviderIndex < static_cast<int>(m_providers.size())) {
+        const auto& prov = m_providers[static_cast<size_t>(m_selectedProviderIndex)];
+
+        wuxc::Border artCard;
+        artCard.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(8));
+        artCard.Background(bgCard);
+        artCard.BorderBrush(borderBrush);
+        artCard.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        artCard.Height(150);
+
+        if (auto bmp = LoadLocalBitmap(prov.iconPngPath)) {
+            wuxc::Image img;
+            img.Source(bmp);
+            img.Width(80);
+            img.Height(80);
+            img.HorizontalAlignment(wux::HorizontalAlignment::Center);
+            img.VerticalAlignment(wux::VerticalAlignment::Center);
+            artCard.Child(img);
+        }
+        stack.Children().Append(artCard);
+
+        wuxc::TextBlock titleTb;
+        titleTb.Text(prov.name);
+        titleTb.FontSize(20);
+        titleTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        titleTb.Foreground(textPrimary);
+        stack.Children().Append(titleTb);
+
+        wuxc::TextBlock compTb;
+        compTb.Text(prov.company);
+        compTb.FontSize(13);
+        compTb.Foreground(textSec);
+        stack.Children().Append(compTb);
+
+        wuxc::Button openBtn;
+        openBtn.Content(winrt::box_value(L"\u25B6  Open " + prov.name));
+        openBtn.HorizontalAlignment(wux::HorizontalAlignment::Stretch);
+        openBtn.Background(accentBrush);
+        openBtn.Foreground(whiteBrush);
+        openBtn.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+        openBtn.Padding(wux::ThicknessHelper::FromLengths(12, 9, 12, 9));
+        const std::wstring exePath = prov.executablePath;
+        const PlatformType provPlat = prov.platform;
+        openBtn.Click([this, exePath, provPlat](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+            if (provPlat == PlatformType::Xbox) {
+                ShellExecuteW(m_hwndView, L"open", L"shell:AppsFolder\\Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App", nullptr, nullptr, SW_SHOWNORMAL);
+            } else if (!exePath.empty() && fs::exists(exePath)) {
+                ShellExecuteW(m_hwndView, L"open", exePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+        });
+        stack.Children().Append(openBtn);
+    }
+    // Case 3: Library Overview (Default)
+    else {
+        wuxc::Border heroBanner;
+        heroBanner.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(10));
+        heroBanner.Background(m_isDarkMode ? MakeBrush(255, 38, 28, 56) : MakeBrush(255, 240, 232, 255));
+        heroBanner.BorderBrush(accentBrush);
+        heroBanner.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        heroBanner.Padding(wux::ThicknessHelper::FromUniformLength(18));
+
+        wuxc::StackPanel heroStack;
+        heroStack.Spacing(8);
+        heroStack.HorizontalAlignment(wux::HorizontalAlignment::Center);
+
+        wchar_t selfDll[MAX_PATH] = { 0 };
+        if (GetModuleFileNameW(g_hInstance, selfDll, MAX_PATH) > 0) {
+            const std::wstring appIconPng = EnsureExtractedIconPng(L"app_library_icon_v2", selfDll);
+            if (auto bmp = LoadLocalBitmap(appIconPng)) {
+                wuxc::Image heroImg;
+                heroImg.Source(bmp);
+                heroImg.Width(72);
+                heroImg.Height(72);
+                heroImg.HorizontalAlignment(wux::HorizontalAlignment::Center);
+                heroStack.Children().Append(heroImg);
+            }
+        }
+
+        wuxc::TextBlock hTitle;
+        hTitle.Text(L"WINDOWS GAME EXPLORER");
+        hTitle.FontSize(14);
+        hTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::Bold());
+        hTitle.Foreground(textPrimary);
+        hTitle.HorizontalAlignment(wux::HorizontalAlignment::Center);
+
+        wuxc::TextBlock hSub;
+        hSub.Text(L"WinUI XAML Game Library & Storefront Hub");
+        hSub.FontSize(12);
+        hSub.Foreground(textSec);
+        hSub.HorizontalAlignment(wux::HorizontalAlignment::Center);
+
+        heroStack.Children().Append(hTitle);
+        heroStack.Children().Append(hSub);
+        heroBanner.Child(heroStack);
+        stack.Children().Append(heroBanner);
+
+        uint64_t totalBytes = 0;
+        for (const auto& g : m_games) totalBytes += g.diskSizeBytes;
+
+        wuxc::TextBlock summaryHdr;
+        summaryHdr.Text(L"Library Overview");
+        summaryHdr.FontSize(18);
+        summaryHdr.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        summaryHdr.Foreground(textPrimary);
+        stack.Children().Append(summaryHdr);
+
+        wuxc::TextBlock statsTb;
+        statsTb.Text(
+            L"\u2022 Installed Providers: " + std::to_wstring(m_providers.size()) + L"\n" +
+            L"\u2022 Installed Games: " + std::to_wstring(m_games.size()) + L"\n" +
+            L"\u2022 Total Disk Footprint: " + (totalBytes > 0 ? FormatDiskSize(totalBytes) : L"Calculating...")
+        );
+        statsTb.FontSize(13);
+        statsTb.Foreground(textSec);
+        statsTb.LineHeight(22);
+        stack.Children().Append(statsTb);
+
+        wuxc::Button gemBtn;
+        gemBtn.Content(winrt::box_value(L"\u2795  Open Game Explorer Manager"));
+        gemBtn.HorizontalAlignment(wux::HorizontalAlignment::Stretch);
+        gemBtn.Background(accentBrush);
+        gemBtn.Foreground(whiteBrush);
+        gemBtn.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+        gemBtn.Padding(wux::ThicknessHelper::FromLengths(12, 9, 12, 9));
+        gemBtn.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+            LaunchCompanionExe(L"GameExplorerManager.exe");
+        });
+        stack.Children().Append(gemBtn);
+
+        wuxc::Button cfgBtn;
+        cfgBtn.Content(winrt::box_value(L"\u2699  Integration Settings"));
+        cfgBtn.HorizontalAlignment(wux::HorizontalAlignment::Stretch);
+        cfgBtn.Background(bgCard);
+        cfgBtn.Foreground(textPrimary);
+        cfgBtn.BorderBrush(borderBrush);
+        cfgBtn.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        cfgBtn.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+        cfgBtn.Padding(wux::ThicknessHelper::FromLengths(12, 8, 12, 8));
+        cfgBtn.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+            LaunchCompanionExe(L"GameExplorerConfig.exe");
+        });
+        stack.Children().Append(cfgBtn);
+    }
+
+    scroll.Content(stack);
+    m_xaml->sidepaneHost.Child(scroll);
+}
+
+void ShellView::BuildXamlViewport() {
+    if (!m_xaml || !m_xaml->rootGrid) return;
+
+    m_xaml->rootGrid.Children().Clear();
+    m_xaml->rootGrid.RowDefinitions().Clear();
+    m_xaml->rootGrid.ColumnDefinitions().Clear();
+
+    const auto bgCanvas    = m_isDarkMode ? MakeBrush(255, 20, 20, 20)   : MakeBrush(255, 250, 250, 250);
+    const auto bgToolbar   = m_isDarkMode ? MakeBrush(255, 28, 28, 28)   : MakeBrush(255, 242, 242, 242);
+    const auto bgCard      = m_isDarkMode ? MakeBrush(255, 34, 34, 34)   : MakeBrush(255, 255, 255, 255);
+    const auto bgCardSel   = m_isDarkMode ? MakeBrush(255, 48, 36, 72)   : MakeBrush(255, 236, 226, 255);
+    const auto borderBrush = m_isDarkMode ? MakeBrush(255, 52, 52, 52)   : MakeBrush(255, 220, 220, 220);
+    const auto accentBrush = MakeBrush(255, 124, 58, 237);
+    const auto textPrimary = m_isDarkMode ? MakeBrush(255, 255, 255, 255): MakeBrush(255, 20, 20, 20);
+    const auto textSec     = m_isDarkMode ? MakeBrush(255, 170, 170, 170): MakeBrush(255, 100, 100, 100);
+    const auto whiteBrush  = MakeBrush(255, 255, 255, 255);
+
+    m_xaml->rootGrid.RequestedTheme(m_isDarkMode ? wux::ElementTheme::Dark : wux::ElementTheme::Light);
+    m_xaml->rootGrid.Background(bgCanvas);
+
+    // Row 0: Top Command & View Switcher Bar (52px)
+    // Row 1: Main Split Content (*)
+    wuxc::RowDefinition rowTop;
+    rowTop.Height(wux::GridLengthHelper::FromPixels(52));
+    wuxc::RowDefinition rowMain;
+    rowMain.Height(wux::GridLengthHelper::FromValueAndType(1.0, wux::GridUnitType::Star));
+    m_xaml->rootGrid.RowDefinitions().Append(rowTop);
+    m_xaml->rootGrid.RowDefinitions().Append(rowMain);
+
+    // =========================================================================
+    // TOP COMMAND BAR (Layout Mode Switcher + Game Explorer Manager + Refresh)
+    // =========================================================================
+    wuxc::Border topBar;
+    topBar.Background(bgToolbar);
+    topBar.BorderBrush(borderBrush);
+    topBar.BorderThickness(wux::ThicknessHelper::FromLengths(0, 0, 0, 1));
+    topBar.Padding(wux::ThicknessHelper::FromLengths(20, 0, 20, 0));
+
+    wuxc::Grid topGrid;
+    wuxc::ColumnDefinition colLeft;
+    colLeft.Width(wux::GridLengthHelper::FromValueAndType(1.0, wux::GridUnitType::Star));
+    wuxc::ColumnDefinition colRight;
+    colRight.Width(wux::GridLengthHelper::Auto());
+    topGrid.ColumnDefinitions().Append(colLeft);
+    topGrid.ColumnDefinitions().Append(colRight);
+
+    // Left: Library Header + Layout Mode Pill Buttons
+    wuxc::StackPanel leftToolbar;
+    leftToolbar.Orientation(wuxc::Orientation::Horizontal);
+    leftToolbar.VerticalAlignment(wux::VerticalAlignment::Center);
+    leftToolbar.Spacing(8);
+
+    auto makeModeBtn = [&](const wchar_t* label, LayoutMode mode) {
+        const bool active = (m_layoutMode == mode);
+        wuxc::Button btn;
+        btn.Content(winrt::box_value(label));
+        btn.Background(active ? accentBrush : bgCard);
+        btn.Foreground(active ? whiteBrush : textPrimary);
+        btn.BorderBrush(active ? accentBrush : borderBrush);
+        btn.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+        btn.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+        btn.Padding(wux::ThicknessHelper::FromLengths(12, 5, 12, 5));
+        btn.Click([this, mode](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+            SwitchLayoutMode(mode);
+        });
+        return btn;
+    };
+
+    const auto& loc = Localization::GetStrings();
+    leftToolbar.Children().Append(makeModeBtn(loc.viewTiles, LayoutMode::CoverArt));
+    leftToolbar.Children().Append(makeModeBtn(L"Hero Banner (~16:9)", LayoutMode::HeroBanner));
+    leftToolbar.Children().Append(makeModeBtn(loc.viewDetails, LayoutMode::DetailsView));
+    wuxc::Grid::SetColumn(leftToolbar, 0);
+    topGrid.Children().Append(leftToolbar);
+
+    // Right: Companion App & Refresh Buttons
+    wuxc::StackPanel rightToolbar;
+    rightToolbar.Orientation(wuxc::Orientation::Horizontal);
+    rightToolbar.VerticalAlignment(wux::VerticalAlignment::Center);
+    rightToolbar.Spacing(8);
+
+    wuxc::Button btnManager;
+    btnManager.Content(winrt::box_value(std::wstring(L"\u2795 ") + loc.manageMetadataBtn));
+    btnManager.Background(bgCard);
+    btnManager.Foreground(textPrimary);
+    btnManager.BorderBrush(borderBrush);
+    btnManager.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+    btnManager.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    btnManager.Padding(wux::ThicknessHelper::FromLengths(12, 5, 12, 5));
+    btnManager.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+        LaunchCompanionExe(L"GameExplorerManager.exe");
+    });
+    rightToolbar.Children().Append(btnManager);
+
+    wuxc::Button btnSettings;
+    btnSettings.Content(winrt::box_value(std::wstring(L"\u2699 ") + loc.settingsBtn));
+    btnSettings.Background(bgCard);
+    btnSettings.Foreground(textPrimary);
+    btnSettings.BorderBrush(borderBrush);
+    btnSettings.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+    btnSettings.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    btnSettings.Padding(wux::ThicknessHelper::FromLengths(12, 5, 12, 5));
+    btnSettings.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+        LaunchCompanionExe(L"GameExplorerConfig.exe");
+    });
+    rightToolbar.Children().Append(btnSettings);
+
+    wuxc::Button btnRefresh;
+    btnRefresh.Content(winrt::box_value(std::wstring(L"\u21BB ") + loc.refreshBtn));
+    btnRefresh.Background(bgCard);
+    btnRefresh.Foreground(textPrimary);
+    btnRefresh.BorderBrush(borderBrush);
+    btnRefresh.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+    btnRefresh.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+    btnRefresh.Padding(wux::ThicknessHelper::FromLengths(12, 5, 12, 5));
+    btnRefresh.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+        Refresh();
+    });
+    rightToolbar.Children().Append(btnRefresh);
+
+    wuxc::Grid::SetColumn(rightToolbar, 1);
+    topGrid.Children().Append(rightToolbar);
+
+    topBar.Child(topGrid);
+    wuxc::Grid::SetRow(topBar, 0);
+    m_xaml->rootGrid.Children().Append(topBar);
+
+    // =========================================================================
+    // MAIN BODY GRID (Column 0: Scrollable Categorized Viewport, Column 1: Sidepane)
+    // =========================================================================
+    wuxc::Grid bodyGrid;
+    wuxc::ColumnDefinition colCanvas;
+    colCanvas.Width(wux::GridLengthHelper::FromValueAndType(1.0, wux::GridUnitType::Star));
+    wuxc::ColumnDefinition colDrawer;
+    colDrawer.Width(wux::GridLengthHelper::FromPixels(340));
+    bodyGrid.ColumnDefinitions().Append(colCanvas);
+    bodyGrid.ColumnDefinitions().Append(colDrawer);
+
+    wuxc::ScrollViewer mainScroll;
+    mainScroll.VerticalScrollBarVisibility(wuxc::ScrollBarVisibility::Auto);
+
+    wuxc::StackPanel mainStack;
+    mainStack.Padding(wux::ThicknessHelper::FromLengths(24, 18, 24, 32));
+    mainStack.Spacing(18);
+
+    // -------------------------------------------------------------------------
+    // SECTION 1: ▾ Game Providers (N)
+    // -------------------------------------------------------------------------
+    wuxc::Button provHeaderBtn;
+    std::wstring provHeaderTitle = (m_providersExpanded ? L"\u25BE  " : L"\u25B8  ") +
+                                   std::wstring(loc.providersHeader) + L" (" +
+                                   std::to_wstring(m_providers.size()) + L")";
+    provHeaderBtn.Content(winrt::box_value(provHeaderTitle));
+    provHeaderBtn.Background(MakeBrush(0, 0, 0, 0));
+    provHeaderBtn.BorderThickness(wux::ThicknessHelper::FromUniformLength(0));
+    provHeaderBtn.Foreground(textPrimary);
+    provHeaderBtn.FontSize(16);
+    provHeaderBtn.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    provHeaderBtn.Padding(wux::ThicknessHelper::FromLengths(4, 4, 12, 4));
+    provHeaderBtn.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+        m_providersExpanded = !m_providersExpanded;
+        BuildXamlViewport();
+    });
+    mainStack.Children().Append(provHeaderBtn);
+
+    if (m_providersExpanded && !m_providers.empty()) {
+        wuxc::VariableSizedWrapGrid provWrap;
+        provWrap.Orientation(wuxc::Orientation::Horizontal);
+        provWrap.ItemWidth(244);
+        provWrap.ItemHeight(78);
+
+        for (size_t i = 0; i < m_providers.size(); ++i) {
+            const auto& prov = m_providers[i];
+            const bool isSel = (m_selectedProviderIndex == static_cast<int>(i));
+
+            wuxc::Border card;
+            card.Width(232);
+            card.Height(66);
+            card.Margin(wux::ThicknessHelper::FromLengths(0, 0, 12, 12));
+            card.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(8));
+            card.Background(isSel ? bgCardSel : bgCard);
+            card.BorderBrush(isSel ? accentBrush : borderBrush);
+            card.BorderThickness(wux::ThicknessHelper::FromUniformLength(isSel ? 2 : 1));
+            card.Padding(wux::ThicknessHelper::FromLengths(12, 8, 12, 8));
+
+            wuxc::StackPanel row;
+            row.Orientation(wuxc::Orientation::Horizontal);
+            row.Spacing(12);
+            row.VerticalAlignment(wux::VerticalAlignment::Center);
+
+            if (auto bmp = LoadLocalBitmap(prov.iconPngPath)) {
+                wuxc::Image iconImg;
+                iconImg.Source(bmp);
+                iconImg.Width(42);
+                iconImg.Height(42);
+                row.Children().Append(iconImg);
+            }
+
+            wuxc::StackPanel txtStack;
+            txtStack.VerticalAlignment(wux::VerticalAlignment::Center);
+
+            wuxc::TextBlock nameTb;
+            nameTb.Text(prov.name);
+            nameTb.FontSize(14);
+            nameTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+            nameTb.Foreground(textPrimary);
+
+            wuxc::TextBlock compTb;
+            compTb.Text(prov.company);
+            compTb.FontSize(12);
+            compTb.Foreground(textSec);
+
+            txtStack.Children().Append(nameTb);
+            txtStack.Children().Append(compTb);
+            row.Children().Append(txtStack);
+            card.Child(row);
+
+            const int provIdx = static_cast<int>(i);
+            const std::wstring exePath = prov.executablePath;
+            const PlatformType provPlat = prov.platform;
+            card.Tapped([this, provIdx](wf::IInspectable const&, wuxi::TappedRoutedEventArgs const&) {
+                m_selectedProviderIndex = provIdx;
+                m_selectedGameIndex = -1;
+                BuildXamlViewport();
+            });
+            card.DoubleTapped([this, exePath, provPlat](wf::IInspectable const&, wuxi::DoubleTappedRoutedEventArgs const&) {
+                if (provPlat == PlatformType::Xbox) {
+                    ShellExecuteW(m_hwndView, L"open", L"shell:AppsFolder\\Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App", nullptr, nullptr, SW_SHOWNORMAL);
+                } else if (!exePath.empty() && fs::exists(exePath)) {
+                    ShellExecuteW(m_hwndView, L"open", exePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                }
+            });
+
+            provWrap.Children().Append(card);
+        }
+        mainStack.Children().Append(provWrap);
+    }
+
+    // Divider line between Game Providers and Games
+    wuxc::Border sectionDiv;
+    sectionDiv.Height(1);
+    sectionDiv.Background(borderBrush);
+    mainStack.Children().Append(sectionDiv);
+
+    // -------------------------------------------------------------------------
+    // SECTION 2: ▾ Games (N)
+    // -------------------------------------------------------------------------
+    wuxc::Button gamesHeaderBtn;
+    std::wstring gamesHeaderTitle = (m_gamesExpanded ? L"\u25BE  " : L"\u25B8  ") +
+                                    std::wstring(loc.gamesLibraryHeader) + L" (" +
+                                    std::to_wstring(m_games.size()) + L")";
+    gamesHeaderBtn.Content(winrt::box_value(gamesHeaderTitle));
+    gamesHeaderBtn.Background(MakeBrush(0, 0, 0, 0));
+    gamesHeaderBtn.BorderThickness(wux::ThicknessHelper::FromUniformLength(0));
+    gamesHeaderBtn.Foreground(textPrimary);
+    gamesHeaderBtn.FontSize(16);
+    gamesHeaderBtn.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    gamesHeaderBtn.Padding(wux::ThicknessHelper::FromLengths(4, 4, 12, 4));
+    gamesHeaderBtn.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+        m_gamesExpanded = !m_gamesExpanded;
+        BuildXamlViewport();
+    });
+    mainStack.Children().Append(gamesHeaderBtn);
+
+    if (m_gamesExpanded) {
+        if (m_layoutMode == LayoutMode::DetailsView) {
+            // Structured Table List Mode
+            wuxc::StackPanel listStack;
+            listStack.Spacing(4);
+
+            for (size_t i = 0; i < m_games.size(); ++i) {
+                const auto& g = m_games[i];
+                const bool isSel = (m_selectedGameIndex == static_cast<int>(i));
+
+                wuxc::Border rowCard;
+                rowCard.Height(46);
+                rowCard.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+                rowCard.Background(isSel ? bgCardSel : bgCard);
+                rowCard.BorderBrush(isSel ? accentBrush : borderBrush);
+                rowCard.BorderThickness(wux::ThicknessHelper::FromUniformLength(isSel ? 2 : 1));
+                rowCard.Padding(wux::ThicknessHelper::FromLengths(12, 0, 12, 0));
+
+                wuxc::Grid rowGrid;
+                wuxc::ColumnDefinition c0; c0.Width(wux::GridLengthHelper::FromPixels(38));
+                wuxc::ColumnDefinition c1; c1.Width(wux::GridLengthHelper::FromValueAndType(1.0, wux::GridUnitType::Star));
+                wuxc::ColumnDefinition c2; c2.Width(wux::GridLengthHelper::FromPixels(130));
+                wuxc::ColumnDefinition c3; c3.Width(wux::GridLengthHelper::FromPixels(100));
+                rowGrid.ColumnDefinitions().Append(c0);
+                rowGrid.ColumnDefinitions().Append(c1);
+                rowGrid.ColumnDefinitions().Append(c2);
+                rowGrid.ColumnDefinitions().Append(c3);
+
+                std::wstring thumbPath = !g.iconPath.empty() ? g.iconPath : g.coverArtPath;
+                if (auto bmp = LoadLocalBitmap(thumbPath)) {
+                    wuxc::Image ico;
+                    ico.Source(bmp);
+                    ico.Width(28);
+                    ico.Height(28);
+                    ico.VerticalAlignment(wux::VerticalAlignment::Center);
+                    wuxc::Grid::SetColumn(ico, 0);
+                    rowGrid.Children().Append(ico);
+                }
+
+                wuxc::TextBlock tTb;
+                tTb.Text(g.title);
+                tTb.FontSize(14);
+                tTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+                tTb.Foreground(textPrimary);
+                tTb.VerticalAlignment(wux::VerticalAlignment::Center);
+                wuxc::Grid::SetColumn(tTb, 1);
+                rowGrid.Children().Append(tTb);
+
+                wuxc::TextBlock pTb;
+                pTb.Text(std::wstring(PlatformToString(g.platform)));
+                pTb.FontSize(12);
+                pTb.Foreground(textSec);
+                pTb.VerticalAlignment(wux::VerticalAlignment::Center);
+                wuxc::Grid::SetColumn(pTb, 2);
+                rowGrid.Children().Append(pTb);
+
+                wuxc::TextBlock sTb;
+                sTb.Text(FormatDiskSize(g.diskSizeBytes));
+                sTb.FontSize(12);
+                sTb.Foreground(textSec);
+                sTb.VerticalAlignment(wux::VerticalAlignment::Center);
+                wuxc::Grid::SetColumn(sTb, 3);
+                rowGrid.Children().Append(sTb);
+
+                rowCard.Child(rowGrid);
+
+                const int gIdx = static_cast<int>(i);
+                rowCard.Tapped([this, gIdx](wf::IInspectable const&, wuxi::TappedRoutedEventArgs const&) {
+                    m_selectedGameIndex = gIdx;
+                    m_selectedProviderIndex = -1;
+                    BuildXamlViewport();
+                });
+                rowCard.DoubleTapped([this, gIdx](wf::IInspectable const&, wuxi::DoubleTappedRoutedEventArgs const&) {
+                    if (gIdx >= 0 && gIdx < static_cast<int>(m_games.size())) {
+                        PlatformLauncher::Launch(m_hwndView, m_games[static_cast<size_t>(gIdx)]);
+                    }
+                });
+
+                listStack.Children().Append(rowCard);
+            }
+            mainStack.Children().Append(listStack);
+        } else {
+            // Grid Mode: CoverArt (~2:3 Vertical Box Art) or HeroBanner (~16:9 Wide Banner)
+            const bool isHero = (m_layoutMode == LayoutMode::HeroBanner);
+            const double cardW = isHero ? 276.0 : 172.0;
+            const double cardH = isHero ? 184.0 : 284.0;
+            const double imgH  = isHero ? 132.0 : 228.0;
+
+            wuxc::VariableSizedWrapGrid gamesWrap;
+            gamesWrap.Orientation(wuxc::Orientation::Horizontal);
+            gamesWrap.ItemWidth(cardW + 14.0);
+            gamesWrap.ItemHeight(cardH + 14.0);
+
+            for (size_t i = 0; i < m_games.size(); ++i) {
+                const auto& g = m_games[i];
+                const bool isSel = (m_selectedGameIndex == static_cast<int>(i));
+
+                wuxc::Border card;
+                card.Width(cardW);
+                card.Height(cardH);
+                card.Margin(wux::ThicknessHelper::FromLengths(0, 0, 14, 14));
+                card.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(8));
+                card.Background(isSel ? bgCardSel : bgCard);
+                card.BorderBrush(isSel ? accentBrush : borderBrush);
+                card.BorderThickness(wux::ThicknessHelper::FromUniformLength(isSel ? 2 : 1));
+
+                wuxc::Grid cardGrid;
+                wuxc::RowDefinition rArt;
+                rArt.Height(wux::GridLengthHelper::FromPixels(imgH));
+                wuxc::RowDefinition rMeta;
+                rMeta.Height(wux::GridLengthHelper::FromValueAndType(1.0, wux::GridUnitType::Star));
+                cardGrid.RowDefinitions().Append(rArt);
+                cardGrid.RowDefinitions().Append(rMeta);
+
+                wuxc::Border artHost;
+                artHost.Background(m_isDarkMode ? MakeBrush(255, 25, 25, 30) : MakeBrush(255, 236, 236, 240));
+                artHost.CornerRadius(wux::CornerRadiusHelper::FromRadii(6, 6, 0, 0));
+
+                std::wstring primaryArt = isHero
+                    ? (!g.heroArtPath.empty() ? g.heroArtPath : g.coverArtPath)
+                    : (!g.coverArtPath.empty() ? g.coverArtPath : g.heroArtPath);
+
+                if (auto bmp = LoadLocalBitmap(primaryArt)) {
+                    wuxc::Image artImg;
+                    artImg.Source(bmp);
+                    artImg.Stretch(wuxm::Stretch::UniformToFill);
+                    artHost.Child(artImg);
+                } else if (auto iconBmp = LoadLocalBitmap(g.iconPath)) {
+                    wuxc::Image icoImg;
+                    icoImg.Source(iconBmp);
+                    icoImg.Width(84);
+                    icoImg.Height(84);
+                    icoImg.HorizontalAlignment(wux::HorizontalAlignment::Center);
+                    icoImg.VerticalAlignment(wux::VerticalAlignment::Center);
+                    artHost.Child(icoImg);
+                }
+                wuxc::Grid::SetRow(artHost, 0);
+                cardGrid.Children().Append(artHost);
+
+                wuxc::StackPanel metaPanel;
+                metaPanel.Padding(wux::ThicknessHelper::FromLengths(10, 6, 10, 6));
+                metaPanel.VerticalAlignment(wux::VerticalAlignment::Center);
+
+                wuxc::TextBlock titleTb;
+                titleTb.Text(g.title);
+                titleTb.FontSize(13);
+                titleTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+                titleTb.Foreground(textPrimary);
+                titleTb.TextTrimming(wux::TextTrimming::CharacterEllipsis);
+                titleTb.MaxLines(1);
+
+                wuxc::TextBlock platTb;
+                platTb.Text(std::wstring(PlatformToString(g.platform)));
+                platTb.FontSize(11);
+                platTb.Foreground(textSec);
+                platTb.TextTrimming(wux::TextTrimming::CharacterEllipsis);
+                platTb.MaxLines(1);
+
+                metaPanel.Children().Append(titleTb);
+                metaPanel.Children().Append(platTb);
+                wuxc::Grid::SetRow(metaPanel, 1);
+                cardGrid.Children().Append(metaPanel);
+
+                card.Child(cardGrid);
+
+                const int gIdx = static_cast<int>(i);
+                card.Tapped([this, gIdx](wf::IInspectable const&, wuxi::TappedRoutedEventArgs const&) {
+                    m_selectedGameIndex = gIdx;
+                    m_selectedProviderIndex = -1;
+                    BuildXamlViewport();
+                });
+                card.DoubleTapped([this, gIdx](wf::IInspectable const&, wuxi::DoubleTappedRoutedEventArgs const&) {
+                    if (gIdx >= 0 && gIdx < static_cast<int>(m_games.size())) {
+                        PlatformLauncher::Launch(m_hwndView, m_games[static_cast<size_t>(gIdx)]);
+                    }
+                });
+
+                gamesWrap.Children().Append(card);
+            }
+
+            mainStack.Children().Append(gamesWrap);
+        }
+    }
+
+    mainScroll.Content(mainStack);
+    wuxc::Grid::SetColumn(mainScroll, 0);
+    bodyGrid.Children().Append(mainScroll);
+
+    // Column 1: Persistent Right Details Sidepane
+    m_xaml->sidepaneHost = wuxc::Border{};
+    RebuildSidepane();
+    wuxc::Grid::SetColumn(m_xaml->sidepaneHost, 1);
+    bodyGrid.Children().Append(m_xaml->sidepaneHost);
+
+    wuxc::Grid::SetRow(bodyGrid, 1);
+    m_xaml->rootGrid.Children().Append(bodyGrid);
+}
+
+IFACEMETHODIMP ShellView::Refresh() {
+    RefreshData();
+    BuildXamlViewport();
+    return S_OK;
 }
 
 IFACEMETHODIMP ShellView::CreateViewWindow(
@@ -341,36 +1139,21 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
 
     HWND hwndParent = nullptr;
     if (m_pShellBrowser != nullptr) {
-        // Query FCW_VIEW (1) for inner view container window
         if (m_pShellBrowser->GetControlWindow(1, &hwndParent) != S_OK || hwndParent == nullptr) {
             m_pShellBrowser->GetWindow(&hwndParent);
         }
     }
     if (hwndParent == nullptr) return E_FAIL;
 
-    UpdateThemeState();
-
-    // Register View window class
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WndProc;
     wc.hInstance = g_hInstance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = nullptr;
+    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = VIEW_CLASS_NAME;
     RegisterClassExW(&wc);
-
-    // Register Drawer window class
-    WNDCLASSEXW dwc{};
-    dwc.cbSize = sizeof(dwc);
-    dwc.style = CS_HREDRAW | CS_VREDRAW;
-    dwc.lpfnWndProc = DrawerProc;
-    dwc.hInstance = g_hInstance;
-    dwc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    dwc.hbrBackground = nullptr;
-    dwc.lpszClassName = DRAWER_CLASS_NAME;
-    RegisterClassExW(&dwc);
 
     int viewX = prcView->left;
     int viewY = prcView->top;
@@ -386,42 +1169,37 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
         viewY = rcParent.top;
     }
 
-    // Create Main View container with native vertical scrollbar
     m_hwndView = CreateWindowExW(
-        0, VIEW_CLASS_NAME, L"GameExplorerView",
-        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VSCROLL,
+        0, VIEW_CLASS_NAME, L"GameExplorerXamlHost",
+        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
         viewX, viewY, viewW, viewH,
         hwndParent, nullptr, g_hInstance, this
     );
-
     if (m_hwndView == nullptr) return E_FAIL;
 
-    // Create Drawer child window on the right (320px)
-    m_drawerWidth = 320;
-    const int drawerX = std::max(0, viewW - m_drawerWidth);
-    m_hwndDrawer = CreateWindowExW(
-        0, DRAWER_CLASS_NAME, L"GameExplorerDrawer",
-        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-        drawerX, 0, m_drawerWidth, viewH,
-        m_hwndView, nullptr, g_hInstance, this
-    );
+    // Initialize WinUI XAML Island (DesktopWindowXamlSource) inside m_hwndView
+    try {
+        m_xaml->xamlManager = wux::Hosting::WindowsXamlManager::InitializeForCurrentThread();
+        m_xaml->xamlSource = wux::Hosting::DesktopWindowXamlSource{};
 
-    // Create Action Button inside Drawer
-    m_hwndLaunchBtn = CreateWindowExW(
-        0, L"BUTTON", L"\u2699  Library Settings",
-        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-        20, std::max(100, viewH - 62), m_drawerWidth - 40, 42,
-        m_hwndDrawer, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LAUNCH_BTN)),
-        g_hInstance, nullptr
-    );
+        auto interop = m_xaml->xamlSource.as<IDesktopWindowXamlSourceNative>();
+        if (interop) {
+            if (SUCCEEDED(interop->AttachToWindow(m_hwndView))) {
+                interop->get_WindowHandle(&m_hwndXamlIsland);
+                if (m_hwndXamlIsland != nullptr) {
+                    SetWindowPos(m_hwndXamlIsland, nullptr, 0, 0, viewW, viewH, SWP_SHOWWINDOW | SWP_NOZORDER);
+                }
+            }
+        }
 
-    DarkMode::ApplyWindowTheme(m_hwndView, m_isDarkMode);
-    DarkMode::ApplyWindowTheme(m_hwndDrawer, m_isDarkMode);
-    DarkMode::ApplyWindowTheme(m_hwndLaunchBtn, m_isDarkMode);
+        m_xaml->rootGrid = wuxc::Grid{};
+        m_xaml->xamlSource.Content(m_xaml->rootGrid);
 
-    RefreshData();
-    UpdateDrawerLayout();
-    UpdateScrollMetrics();
+        RefreshData();
+        BuildXamlViewport();
+    } catch (...) {
+        // Fallback safety if XAML initialization encounters an exception
+    }
 
     *phWnd = m_hwndView;
     return S_OK;
@@ -431,7 +1209,23 @@ IFACEMETHODIMP ShellView::DestroyViewWindow() {
     if (m_uState != SVUIA_DEACTIVATE) {
         UIActivate(SVUIA_DEACTIVATE);
     }
-    FreeCachedCover();
+
+    if (m_xaml) {
+        try {
+            m_xaml->sidepaneHost = nullptr;
+            m_xaml->rootGrid = nullptr;
+            if (m_xaml->xamlSource) {
+                m_xaml->xamlSource.Close();
+                m_xaml->xamlSource = nullptr;
+            }
+            if (m_xaml->xamlManager) {
+                m_xaml->xamlManager.Close();
+                m_xaml->xamlManager = nullptr;
+            }
+        } catch (...) {}
+    }
+
+    m_hwndXamlIsland = nullptr;
     if (m_hwndView != nullptr) {
         DestroyWindow(m_hwndView);
         m_hwndView = nullptr;
@@ -463,10 +1257,9 @@ IFACEMETHODIMP ShellView::SelectItem(PCUITEMID_CHILD pidlItem, SVSIF /*uFlags*/)
         if (data != nullptr) {
             for (size_t i = 0; i < m_games.size(); ++i) {
                 if (m_games[i].id == data->gameId) {
-                    m_selectedIndex = static_cast<int>(i);
-                    UpdateCachedCover(m_games[m_selectedIndex]);
-                    InvalidateRect(m_hwndView, nullptr, TRUE);
-                    InvalidateRect(m_hwndDrawer, nullptr, TRUE);
+                    m_selectedGameIndex = static_cast<int>(i);
+                    m_selectedProviderIndex = -1;
+                    BuildXamlViewport();
                     break;
                 }
             }
@@ -492,705 +1285,34 @@ IFACEMETHODIMP ShellView::Exec(const GUID* pguidCmdGroup, DWORD nCmdID, DWORD /*
     return OLECMDERR_E_UNKNOWNGROUP;
 }
 
-void ShellView::UpdateDrawerLayout() {
-    if (m_hwndView == nullptr || m_hwndDrawer == nullptr) return;
-
-    RECT rc;
-    GetClientRect(m_hwndView, &rc);
-    const int viewW = rc.right - rc.left;
-    const int viewH = rc.bottom - rc.top;
-
-    if (viewW > 500) {
-        const int drawerX = viewW - m_drawerWidth;
-        SetWindowPos(m_hwndDrawer, nullptr, drawerX, 0, m_drawerWidth, viewH, SWP_NOZORDER | SWP_SHOWWINDOW);
-        if (m_hwndLaunchBtn != nullptr) {
-            SetWindowPos(m_hwndLaunchBtn, nullptr, 20, std::max(100, viewH - 62), m_drawerWidth - 40, 42, SWP_NOZORDER | SWP_SHOWWINDOW);
-        }
-    } else {
-        ShowWindow(m_hwndDrawer, SW_HIDE);
-    }
-}
-
-void ShellView::LaunchSelectedGame() {
-    if (m_selectedIndex < 0 || m_selectedIndex >= static_cast<int>(m_games.size())) {
-        return;
-    }
-    PlatformLauncher::Launch(m_hwndView, m_games[m_selectedIndex]);
-}
-
-void ShellView::OnPaint(HDC hdc, const RECT& rc) {
-    // Fill Canvas Background in authentic Windows 11 Dark / Light palette
-    HBRUSH bgBrush = CreateSolidBrush(m_palette.canvasBg);
-    FillRect(hdc, &rc, bgBrush);
-    DeleteObject(bgBrush);
-
-    const int canvasW = rc.right - rc.left - m_drawerWidth;
-    if (canvasW <= 0) return;
-
-    constexpr int headerH = 34;
-    constexpr int rowH = 38;
-
-    if (m_games.empty()) {
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, m_palette.textSecondary);
-        SelectObject(hdc, m_hFontBody);
-        RECT textRc = { 20, headerH + 40, canvasW - 20, headerH + 80 };
-        DrawTextW(hdc, L"No games discovered yet. Open Library Settings to scan drives or add games.", -1, &textRc, DT_CENTER | DT_SINGLELINE);
-    } else {
-        // Clip rows beneath sticky header
-        HRGN rgnRows = CreateRectRgn(0, headerH, canvasW, rc.bottom);
-        SelectClipRgn(hdc, rgnRows);
-        DeleteObject(rgnRows);
-
-        SelectObject(hdc, m_hFontBody);
-
-        for (size_t i = 0; i < m_games.size(); ++i) {
-            const int rowY = headerH + static_cast<int>(i) * rowH - m_scrollY;
-            if (rowY + rowH < headerH || rowY > rc.bottom) continue;
-
-            const bool isSelected = (static_cast<int>(i) == m_selectedIndex);
-            RECT rowRc = { 4, rowY + 1, canvasW - 4, rowY + rowH - 1 };
-
-            COLORREF rowBgColor;
-            if (isSelected) {
-                rowBgColor = m_isDarkMode ? RGB(38, 55, 78) : RGB(225, 240, 255);
-            } else if (i % 2 == 1) {
-                rowBgColor = m_isDarkMode ? RGB(34, 34, 34) : RGB(248, 248, 248);
-            } else {
-                rowBgColor = m_palette.canvasBg;
-            }
-
-            HBRUSH rowBrush = CreateSolidBrush(rowBgColor);
-            FillRect(hdc, &rowRc, rowBrush);
-            DeleteObject(rowBrush);
-
-            if (isSelected) {
-                // Fluent 3px left vertical accent pill
-                RECT accentRc = { 4, rowY + 3, 7, rowY + rowH - 3 };
-                HBRUSH accentBrush = CreateSolidBrush(m_isDarkMode ? RGB(96, 175, 255) : RGB(0, 103, 192));
-                FillRect(hdc, &accentRc, accentBrush);
-                DeleteObject(accentBrush);
-
-                HPEN selPen = CreatePen(PS_SOLID, 1, m_isDarkMode ? RGB(55, 80, 115) : RGB(190, 215, 245));
-                HGDIOBJ oldP = SelectObject(hdc, selPen);
-                HGDIOBJ oldB = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-                Rectangle(hdc, rowRc.left, rowRc.top, rowRc.right, rowRc.bottom);
-                SelectObject(hdc, oldB);
-                SelectObject(hdc, oldP);
-                DeleteObject(selPen);
-            }
-
-            // Game Title
-            SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, isSelected ? (m_isDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0)) : m_palette.textPrimary);
-            SelectObject(hdc, m_hFontTitle);
-            RECT titleCol = { 16, rowY, 330, rowY + rowH };
-            DrawTextW(hdc, m_games[i].title.c_str(), -1, &titleCol, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-            // Platform
-            SelectObject(hdc, m_hFontBody);
-            SetTextColor(hdc, m_isDarkMode ? RGB(160, 200, 255) : RGB(0, 90, 180));
-            RECT platCol = { 345, rowY, 470, rowY + rowH };
-            DrawTextW(hdc, PlatformToString(m_games[i].platform).data(), -1, &platCol, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            // Size
-            SetTextColor(hdc, m_palette.textSecondary);
-            RECT sizeCol = { 485, rowY, 590, rowY + rowH };
-            const std::wstring szStr = (m_games[i].diskSizeBytes > 0) ? FormatDiskSize(m_games[i].diskSizeBytes) : L"—";
-            DrawTextW(hdc, szStr.c_str(), -1, &sizeCol, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            // Rating
-            RECT rateCol = { 605, rowY, 710, rowY + rowH };
-            const std::wstring rateStr = m_games[i].rating.empty() ? L"—" : (m_games[i].rating + L"%");
-            DrawTextW(hdc, rateStr.c_str(), -1, &rateCol, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            // Developer
-            RECT devCol = { 725, rowY, 860, rowY + rowH };
-            const std::wstring devStr = m_games[i].developer.empty() ? L"—" : m_games[i].developer;
-            DrawTextW(hdc, devStr.c_str(), -1, &devCol, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-            // Released
-            RECT dateCol = { 875, rowY, 1000, rowY + rowH };
-            const std::wstring dateStr = m_games[i].releaseDate.empty() ? L"—" : m_games[i].releaseDate;
-            DrawTextW(hdc, dateStr.c_str(), -1, &dateCol, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        }
-
-        SelectClipRgn(hdc, nullptr);
-    }
-
-    // Sticky Table Header Bar
-    RECT headerRc = { 0, 0, canvasW, headerH };
-    HBRUSH headerBgBrush = CreateSolidBrush(m_isDarkMode ? RGB(26, 26, 26) : RGB(242, 242, 242));
-    FillRect(hdc, &headerRc, headerBgBrush);
-    DeleteObject(headerBgBrush);
-
-    HPEN headerBorderPen = CreatePen(PS_SOLID, 1, m_isDarkMode ? RGB(45, 45, 45) : RGB(220, 220, 220));
-    HGDIOBJ oldPen = SelectObject(hdc, headerBorderPen);
-    MoveToEx(hdc, 0, headerH - 1, nullptr);
-    LineTo(hdc, canvasW, headerH - 1);
-
-    // Column separator ticks
-    constexpr int dividers[] = { 335, 475, 595, 715, 865 };
-    for (int divX : dividers) {
-        if (divX < canvasW) {
-            MoveToEx(hdc, divX, 6, nullptr);
-            LineTo(hdc, divX, headerH - 6);
-        }
-    }
-
-    SelectObject(hdc, m_hFontTitle);
-    SetTextColor(hdc, m_palette.textPrimary);
-
-    RECT colTitle = { 16, 0, 330, headerH };
-    RECT colStore = { 345, 0, 470, headerH };
-    RECT colSize  = { 485, 0, 590, headerH };
-    RECT colRating= { 605, 0, 710, headerH };
-    RECT colDev   = { 725, 0, 860, headerH };
-    RECT colDate  = { 875, 0, 1000, headerH };
-
-    DrawTextW(hdc, L"Game Title", -1, &colTitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextW(hdc, L"Platform", -1, &colStore, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextW(hdc, L"Size", -1, &colSize, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextW(hdc, L"Rating", -1, &colRating, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextW(hdc, L"Developer", -1, &colDev, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextW(hdc, L"Released", -1, &colDate, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    SelectObject(hdc, oldPen);
-    DeleteObject(headerBorderPen);
-}
-
-void ShellView::OnDrawerPaint(HDC hdc, const RECT& rc) {
-    // Fill Drawer Background
-    FillRect(hdc, &rc, m_hDrawerBrush);
-
-    // Left border divider separating canvas from drawer
-    HPEN divPen = CreatePen(PS_SOLID, 1, m_palette.cardBorder);
-    HGDIOBJ oldPen = SelectObject(hdc, divPen);
-    MoveToEx(hdc, 0, 0, nullptr);
-    LineTo(hdc, 0, rc.bottom);
-    SelectObject(hdc, oldPen);
-    DeleteObject(divPen);
-
-    SetBkMode(hdc, TRANSPARENT);
-
-    // =========================================================================
-    // STATE A: GAME SELECTED
-    // =========================================================================
-    if (m_selectedIndex >= 0 && m_selectedIndex < static_cast<int>(m_games.size())) {
-        const auto& game = m_games[m_selectedIndex];
-
-        // 1. Top Cover / Hero Banner Preview Area
-        constexpr int previewX = 20;
-        constexpr int previewY = 18;
-        const int previewW = m_drawerWidth - 40;
-        constexpr int previewH = 135;
-        RECT previewRc = { previewX, previewY, previewX + previewW, previewY + previewH };
-
-        if (m_hCachedCoverBmp != nullptr) {
-            HDC imgDC = CreateCompatibleDC(hdc);
-            if (imgDC != nullptr) {
-                HGDIOBJ oldImgBmp = SelectObject(imgDC, m_hCachedCoverBmp);
-                BITMAP bm{};
-                GetObjectW(m_hCachedCoverBmp, sizeof(bm), &bm);
-                if (bm.bmWidth > 0 && bm.bmHeight > 0) {
-                    SetStretchBltMode(hdc, HALFTONE);
-                    SetBrushOrgEx(hdc, 0, 0, nullptr);
-                    StretchBlt(hdc, previewX, previewY, previewW, previewH, imgDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
-                }
-                SelectObject(imgDC, oldImgBmp);
-                DeleteDC(imgDC);
-            }
-
-            // 1px Subtle Border around Cover Art
-            HPEN borderPen = CreatePen(PS_SOLID, 1, m_palette.cardBorder);
-            HGDIOBJ oP = SelectObject(hdc, borderPen);
-            HGDIOBJ oB = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-            Rectangle(hdc, previewX, previewY, previewX + previewW, previewY + previewH);
-            SelectObject(hdc, oB);
-            SelectObject(hdc, oP);
-            DeleteObject(borderPen);
-        } else {
-            // Elegant Fluent Hero placeholder card
-            HBRUSH heroBrush = CreateSolidBrush(m_isDarkMode ? RGB(38, 28, 52) : RGB(243, 237, 249));
-            FillRect(hdc, &previewRc, heroBrush);
-            DeleteObject(heroBrush);
-
-            HPEN heroBorder = CreatePen(PS_SOLID, 1, m_isDarkMode ? RGB(90, 50, 130) : RGB(200, 180, 230));
-            HGDIOBJ oP = SelectObject(hdc, heroBorder);
-            HGDIOBJ oB = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-            Rectangle(hdc, previewX, previewY, previewX + previewW, previewY + previewH);
-            SelectObject(hdc, oB);
-            SelectObject(hdc, oP);
-            DeleteObject(heroBorder);
-
-            RECT iconRc = { previewX, previewY + 35, previewX + previewW, previewY + 70 };
-            SelectObject(hdc, m_hFontDrawerTitle);
-            SetTextColor(hdc, m_isDarkMode ? RGB(160, 120, 220) : RGB(120, 60, 180));
-            DrawTextW(hdc, L"\u25C8", -1, &iconRc, DT_CENTER | DT_SINGLELINE);
-
-            RECT noArtRc = { previewX, previewY + 75, previewX + previewW, previewY + 105 };
-            SelectObject(hdc, m_hFontSub);
-            SetTextColor(hdc, m_palette.textSecondary);
-            DrawTextW(hdc, L"GAME COVER PREVIEW", -1, &noArtRc, DT_CENTER | DT_SINGLELINE);
-        }
-
-        // 2. Game Title
-        SelectObject(hdc, m_hFontDrawerTitle);
-        SetTextColor(hdc, m_palette.textPrimary);
-        RECT titleRc = { 20, 168, rc.right - 20, 218 };
-        DrawTextW(hdc, game.title.c_str(), -1, &titleRc, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
-
-        // 3. Platform Badge
-        RECT badgeRc = { 20, 222, rc.right - 20, 244 };
-        SelectObject(hdc, m_hFontSub);
-        SetTextColor(hdc, m_isDarkMode ? RGB(140, 190, 255) : RGB(0, 90, 180));
-        std::wstring platText = L"PLATFORM: " + std::wstring(PlatformToString(game.platform));
-        DrawTextW(hdc, platText.c_str(), -1, &badgeRc, DT_LEFT | DT_SINGLELINE);
-
-        // 4. Game Specifications
-        SelectObject(hdc, m_hFontBody);
-        SetTextColor(hdc, m_palette.textSecondary);
-        int currentY = 252;
-
-        std::wstring szText = L"Size on Disk: " + (game.diskSizeBytes > 0 ? FormatDiskSize(game.diskSizeBytes) : L"—");
-        TextOutW(hdc, 20, currentY, szText.c_str(), static_cast<int>(szText.size()));
-        currentY += 24;
-
-        if (!game.developer.empty()) {
-            std::wstring devText = L"Developer: " + game.developer;
-            TextOutW(hdc, 20, currentY, devText.c_str(), static_cast<int>(devText.size()));
-            currentY += 24;
-        }
-
-        if (!game.releaseDate.empty()) {
-            std::wstring dateText = L"Released: " + game.releaseDate;
-            TextOutW(hdc, 20, currentY, dateText.c_str(), static_cast<int>(dateText.size()));
-            currentY += 24;
-        }
-
-        std::wstring ratingText = L"Community Score: " + (game.rating.empty() ? L"Unrated" : (game.rating + L"%"));
-        TextOutW(hdc, 20, currentY, ratingText.c_str(), static_cast<int>(ratingText.size()));
-        currentY += 28;
-
-        // 5. Synopsis / Description
-        if (!game.synopsis.empty()) {
-            SelectObject(hdc, m_hFontSub);
-            SetTextColor(hdc, m_palette.textSecondary);
-            RECT synRc = { 20, currentY, rc.right - 20, rc.bottom - 75 };
-            DrawTextW(hdc, game.synopsis.c_str(), -1, &synRc, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
-        }
-    }
-    // =========================================================================
-    // STATE B: NO GAME SELECTED -> LIBRARY OVERVIEW
-    // =========================================================================
-    else {
-        // 1. Fluent Controller Hero Card Banner
-        constexpr int bannerX = 20;
-        constexpr int bannerY = 18;
-        const int bannerW = m_drawerWidth - 40;
-        constexpr int bannerH = 125;
-        RECT bannerRc = { bannerX, bannerY, bannerX + bannerW, bannerY + bannerH };
-
-        HBRUSH bannerBrush = CreateSolidBrush(m_isDarkMode ? RGB(38, 28, 52) : RGB(243, 237, 249));
-        HPEN bannerPen = CreatePen(PS_SOLID, 1, m_isDarkMode ? RGB(90, 50, 130) : RGB(200, 180, 230));
-        HGDIOBJ oldB = SelectObject(hdc, bannerBrush);
-        HGDIOBJ oldP = SelectObject(hdc, bannerPen);
-        RoundRect(hdc, bannerRc.left, bannerRc.top, bannerRc.right, bannerRc.bottom, 12, 12);
-        SelectObject(hdc, oldP);
-        SelectObject(hdc, oldB);
-        DeleteObject(bannerBrush);
-        DeleteObject(bannerPen);
-
-        // Vector Controller Glyph inside Card
-        RECT glyphRc = { bannerX, bannerY + 18, bannerX + bannerW, bannerY + 54 };
-        SelectObject(hdc, m_hFontDrawerTitle);
-        SetTextColor(hdc, m_isDarkMode ? RGB(170, 120, 240) : RGB(120, 60, 190));
-        DrawTextW(hdc, L"\U0001F3AE", -1, &glyphRc, DT_CENTER | DT_SINGLELINE);
-
-        // Hero Sub-tag: "WINDOWS GAME EXPLORER"
-        RECT tagRc = { bannerX, bannerY + 58, bannerX + bannerW, bannerY + 80 };
-        SelectObject(hdc, m_hFontTitle);
-        SetTextColor(hdc, m_isDarkMode ? RGB(190, 160, 240) : RGB(110, 60, 180));
-        DrawTextW(hdc, L"WINDOWS GAME EXPLORER", -1, &tagRc, DT_CENTER | DT_SINGLELINE);
-
-        RECT tagSubRc = { bannerX, bannerY + 82, bannerX + bannerW, bannerY + 104 };
-        SelectObject(hdc, m_hFontSub);
-        SetTextColor(hdc, m_palette.textSecondary);
-        DrawTextW(hdc, L"Unified Game Library & Hub", -1, &tagSubRc, DT_CENTER | DT_SINGLELINE);
-
-        // 2. Library Statistics Header
-        RECT titleRc = { 20, 162, rc.right - 20, 190 };
-        SelectObject(hdc, m_hFontDrawerTitle);
-        SetTextColor(hdc, m_palette.textPrimary);
-        DrawTextW(hdc, L"Library Summary", -1, &titleRc, DT_LEFT | DT_SINGLELINE);
-
-        // Subtitle
-        RECT subRc = { 20, 192, rc.right - 20, 214 };
-        SelectObject(hdc, m_hFontBody);
-        SetTextColor(hdc, m_isDarkMode ? RGB(120, 185, 255) : RGB(0, 103, 192));
-        std::wstring countStr = std::to_wstring(m_games.size()) + L" Games Installed Across Drives";
-        DrawTextW(hdc, countStr.c_str(), -1, &subRc, DT_LEFT | DT_SINGLELINE);
-
-        // Calculate Aggregate Stats
-        uint64_t totalBytes = 0;
-        std::vector<std::wstring> storeNames;
-        int ratedCount = 0;
-        double sumRating = 0.0;
-
-        for (const auto& g : m_games) {
-            totalBytes += g.diskSizeBytes;
-            std::wstring pStr = std::wstring(PlatformToString(g.platform));
-            if (std::find(storeNames.begin(), storeNames.end(), pStr) == storeNames.end()) {
-                storeNames.push_back(pStr);
-            }
-            if (!g.rating.empty()) {
-                wchar_t* end = nullptr;
-                double r = wcstod(g.rating.c_str(), &end);
-                if (r > 0) {
-                    sumRating += r;
-                    ++ratedCount;
-                }
-            }
-        }
-
-        SelectObject(hdc, m_hFontBody);
-        SetTextColor(hdc, m_palette.textSecondary);
-        int currentY = 226;
-
-        std::wstring szText = L"Total Storage: " + (totalBytes > 0 ? FormatDiskSize(totalBytes) : L"Calculating...");
-        TextOutW(hdc, 20, currentY, szText.c_str(), static_cast<int>(szText.size()));
-        currentY += 26;
-
-        std::wstring scoreText;
-        if (ratedCount > 0) {
-            const int avg = static_cast<int>(std::round(sumRating / ratedCount));
-            scoreText = L"Library Avg Rating: " + std::to_wstring(avg) + L"%";
-        } else {
-            scoreText = L"Library Avg Rating: Highly Rated";
-        }
-        TextOutW(hdc, 20, currentY, scoreText.c_str(), static_cast<int>(scoreText.size()));
-        currentY += 26;
-
-        const std::wstring cloudText = L"Profile Cloud Sync: Active (OneDrive)";
-        TextOutW(hdc, 20, currentY, cloudText.c_str(), static_cast<int>(cloudText.size()));
-        currentY += 32;
-
-        // Installed Storefronts Section
-        SelectObject(hdc, m_hFontTitle);
-        SetTextColor(hdc, m_palette.textPrimary);
-        TextOutW(hdc, 20, currentY, L"Detected Storefronts:", 21);
-        currentY += 24;
-
-        SelectObject(hdc, m_hFontSub);
-        SetTextColor(hdc, m_isDarkMode ? RGB(160, 200, 255) : RGB(0, 80, 160));
-        std::wstring storeList;
-        for (size_t s = 0; s < storeNames.size(); ++s) {
-            if (s > 0) storeList += L" \u2022 ";
-            storeList += storeNames[s];
-        }
-        if (storeList.empty()) storeList = L"Steam \u2022 Epic \u2022 GOG \u2022 itch.io \u2022 Battle.net \u2022 Xbox";
-        RECT storeRc = { 20, currentY, rc.right - 20, currentY + 44 };
-        DrawTextW(hdc, storeList.c_str(), -1, &storeRc, DT_LEFT | DT_WORDBREAK);
-        currentY += 48;
-
-        SelectObject(hdc, m_hFontSub);
-        SetTextColor(hdc, m_palette.textSecondary);
-        RECT tipRc = { 20, currentY, rc.right - 20, rc.bottom - 75 };
-        DrawTextW(hdc, L"Tip: Click any game row to view details, synopsis, and launch. Press Escape or click outside to return to Library Overview.", -1, &tipRc, DT_LEFT | DT_WORDBREAK);
-    }
-}
-
-void ShellView::OnLButtonDown(int mouseX, int mouseY) {
-    RECT rc;
-    GetClientRect(m_hwndView, &rc);
-    const int canvasW = rc.right - rc.left - m_drawerWidth;
-
-    if (mouseX < canvasW) {
-        constexpr int headerH = 34;
-        constexpr int rowH = 38;
-
-        if (mouseY > headerH) {
-            const int clickedIndex = (mouseY - headerH + m_scrollY) / rowH;
-            if (clickedIndex >= 0 && clickedIndex < static_cast<int>(m_games.size())) {
-                m_selectedIndex = clickedIndex;
-                UpdateCachedCover(m_games[m_selectedIndex]);
-            } else {
-                m_selectedIndex = -1;
-                FreeCachedCover();
-            }
-        } else {
-            m_selectedIndex = -1;
-            FreeCachedCover();
-        }
-
-        InvalidateRect(m_hwndView, nullptr, TRUE);
-        if (m_hwndDrawer != nullptr) {
-            InvalidateRect(m_hwndDrawer, nullptr, TRUE);
-            if (m_hwndLaunchBtn != nullptr) {
-                InvalidateRect(m_hwndLaunchBtn, nullptr, TRUE);
-            }
-        }
-    }
-}
-
 LRESULT CALLBACK ShellView::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     ShellView* pThis = nullptr;
+
     if (uMsg == WM_NCCREATE) {
-        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
-        pThis = static_cast<ShellView*>(cs->lpCreateParams);
+        auto* lpcs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        pThis = static_cast<ShellView*>(lpcs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
     } else {
         pThis = reinterpret_cast<ShellView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
-    if (pThis == nullptr) {
-        return DefWindowProcW(hwnd, uMsg, wParam, lParam);
-    }
-
-    switch (uMsg) {
-    case WM_ERASEBKGND:
-        return 1; // Handled in WM_PAINT double buffer
-
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-
-        // Memory DC double-buffering: 100% flicker-free and memory-only
-        HDC memDC = CreateCompatibleDC(hdc);
-        HBITMAP memBmp = CreateCompatibleBitmap(hdc, rc.right - rc.left, rc.bottom - rc.top);
-        HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
-
-        pThis->OnPaint(memDC, rc);
-
-        BitBlt(hdc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, memDC, 0, 0, SRCCOPY);
-
-        SelectObject(memDC, oldBmp);
-        DeleteObject(memBmp);
-        DeleteDC(memDC);
-
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-
-    case WM_VSCROLL: {
-        SCROLLINFO si{};
-        si.cbSize = sizeof(si);
-        si.fMask = SIF_ALL;
-        GetScrollInfo(hwnd, SB_VERT, &si);
-        int newY = si.nPos;
-        switch (LOWORD(wParam)) {
-        case SB_LINEUP: newY -= 40; break;
-        case SB_LINEDOWN: newY += 40; break;
-        case SB_PAGEUP: newY -= si.nPage; break;
-        case SB_PAGEDOWN: newY += si.nPage; break;
-        case SB_TOP: newY = 0; break;
-        case SB_BOTTOM: newY = pThis->m_contentHeight; break;
-        case SB_THUMBTRACK:
-        case SB_THUMBPOSITION: newY = si.nTrackPos; break;
-        }
-        pThis->ScrollTo(newY);
-        return 0;
-    }
-
-    case WM_MOUSEWHEEL: {
-        const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-        const double lines = static_cast<double>(delta) / static_cast<double>(WHEEL_DELTA);
-        const int scrollAmount = static_cast<int>(std::round(lines * 60.0));
-        pThis->ScrollTo(pThis->m_scrollY - scrollAmount);
-        return 0;
-    }
-
-    case WM_SETTINGCHANGE:
-    case WM_THEMECHANGED:
-        pThis->UpdateThemeState();
-        InvalidateRect(hwnd, nullptr, TRUE);
-        if (pThis->m_hwndDrawer != nullptr) {
-            InvalidateRect(pThis->m_hwndDrawer, nullptr, TRUE);
-        }
-        return 0;
-
-    case WM_SIZE: {
-        static bool s_inSize = false;
-        if (s_inSize) return 0;
-        s_inSize = true;
-        pThis->UpdateDrawerLayout();
-        pThis->UpdateScrollMetrics();
-        s_inSize = false;
-        return 0;
-    }
-
-    case WM_LBUTTONDOWN:
-        pThis->OnLButtonDown(LOWORD(lParam), HIWORD(lParam));
-        SetFocus(hwnd);
-        return 0;
-
-    case WM_LBUTTONDBLCLK:
-        pThis->LaunchSelectedGame();
-        return 0;
-
-    case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE) {
-            pThis->m_selectedIndex = -1;
-            pThis->FreeCachedCover();
-            InvalidateRect(hwnd, nullptr, TRUE);
-            if (pThis->m_hwndDrawer != nullptr) {
-                InvalidateRect(pThis->m_hwndDrawer, nullptr, TRUE);
-                if (pThis->m_hwndLaunchBtn != nullptr) {
-                    InvalidateRect(pThis->m_hwndLaunchBtn, nullptr, TRUE);
-                }
+    if (pThis != nullptr) {
+        switch (uMsg) {
+        case WM_SIZE: {
+            const int cx = LOWORD(lParam);
+            const int cy = HIWORD(lParam);
+            if (pThis->m_hwndXamlIsland != nullptr) {
+                SetWindowPos(pThis->m_hwndXamlIsland, nullptr, 0, 0, cx, cy, SWP_NOZORDER | SWP_SHOWWINDOW);
             }
             return 0;
         }
-        if (wParam == VK_RETURN) {
-            pThis->LaunchSelectedGame();
-            return 0;
-        }
-        if (wParam == VK_F5) {
-            pThis->Refresh();
-            return 0;
-        }
-        if (wParam == VK_DOWN) {
-            if (pThis->m_selectedIndex + 1 < static_cast<int>(pThis->m_games.size())) {
-                ++pThis->m_selectedIndex;
-                pThis->UpdateCachedCover(pThis->m_games[pThis->m_selectedIndex]);
-                InvalidateRect(hwnd, nullptr, TRUE);
-                if (pThis->m_hwndDrawer != nullptr) {
-                    InvalidateRect(pThis->m_hwndDrawer, nullptr, TRUE);
-                    if (pThis->m_hwndLaunchBtn != nullptr) {
-                        InvalidateRect(pThis->m_hwndLaunchBtn, nullptr, TRUE);
-                    }
-                }
+        case WM_SETTINGCHANGE: {
+            if (lParam != 0 && wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0) {
+                pThis->Refresh();
             }
-            return 0;
+            break;
         }
-        if (wParam == VK_UP) {
-            if (pThis->m_selectedIndex > 0) {
-                --pThis->m_selectedIndex;
-                pThis->UpdateCachedCover(pThis->m_games[pThis->m_selectedIndex]);
-                InvalidateRect(hwnd, nullptr, TRUE);
-                if (pThis->m_hwndDrawer != nullptr) {
-                    InvalidateRect(pThis->m_hwndDrawer, nullptr, TRUE);
-                    if (pThis->m_hwndLaunchBtn != nullptr) {
-                        InvalidateRect(pThis->m_hwndLaunchBtn, nullptr, TRUE);
-                    }
-                }
-            }
-            return 0;
         }
-        break;
-
-    case WM_NCDESTROY:
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-        return DefWindowProcW(hwnd, uMsg, wParam, lParam);
-    }
-
-    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
-}
-
-LRESULT CALLBACK ShellView::DrawerProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    ShellView* pThis = nullptr;
-    if (uMsg == WM_NCCREATE) {
-        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
-        pThis = static_cast<ShellView*>(cs->lpCreateParams);
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
-    } else {
-        pThis = reinterpret_cast<ShellView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-
-    if (pThis == nullptr) {
-        return DefWindowProcW(hwnd, uMsg, wParam, lParam);
-    }
-
-    switch (uMsg) {
-    case WM_ERASEBKGND:
-        return 1;
-
-    case WM_MOUSEWHEEL:
-        if (pThis->m_hwndView != nullptr) {
-            return SendMessageW(pThis->m_hwndView, WM_MOUSEWHEEL, wParam, lParam);
-        }
-        return 0;
-
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDC_LAUNCH_BTN) {
-            if (pThis->m_selectedIndex >= 0 && pThis->m_selectedIndex < static_cast<int>(pThis->m_games.size())) {
-                pThis->LaunchSelectedGame();
-            } else {
-                wchar_t modPath[MAX_PATH];
-                GetModuleFileNameW(g_hInstance, modPath, MAX_PATH);
-                fs::path cfgPath = fs::path(modPath).parent_path() / L"GameExplorerConfig.exe";
-                if (fs::exists(cfgPath)) {
-                    ShellExecuteW(hwnd, L"open", cfgPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                }
-            }
-            return 0;
-        }
-        break;
-
-    case WM_DRAWITEM: {
-        auto* pDis = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-        if (pDis != nullptr && pDis->CtlID == IDC_LAUNCH_BTN) {
-            HDC hdcBtn = pDis->hDC;
-            RECT rcBtn = pDis->rcItem;
-
-            const bool isPressed = (pDis->itemState & ODS_SELECTED) != 0;
-            COLORREF btnBg = isPressed ? pThis->m_palette.accentPressed : pThis->m_palette.accent;
-
-            // Rounded rectangle button with system accent color
-            HBRUSH hBr = CreateSolidBrush(btnBg);
-            HPEN hPen = CreatePen(PS_SOLID, 1, isPressed ? pThis->m_palette.accentPressed : pThis->m_palette.accentHover);
-            HGDIOBJ oldBr = SelectObject(hdcBtn, hBr);
-            HGDIOBJ oldPen = SelectObject(hdcBtn, hPen);
-
-            RoundRect(hdcBtn, rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom, 8, 8);
-
-            SelectObject(hdcBtn, oldPen);
-            SelectObject(hdcBtn, oldBr);
-            DeleteObject(hBr);
-            DeleteObject(hPen);
-
-            // Draw button text
-            SetBkMode(hdcBtn, TRANSPARENT);
-            SetTextColor(hdcBtn, pThis->m_palette.accentText);
-            SelectObject(hdcBtn, pThis->m_hFontTitle);
-
-            const bool hasGame = (pThis->m_selectedIndex >= 0 && pThis->m_selectedIndex < static_cast<int>(pThis->m_games.size()));
-            const wchar_t* btnText = hasGame ? L"\u25B6  Launch Game" : L"\u2699  Library Settings";
-            DrawTextW(hdcBtn, btnText, -1, &rcBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            return TRUE;
-        }
-        break;
-    }
-
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-
-        // Memory DC double-buffering
-        HDC memDC = CreateCompatibleDC(hdc);
-        HBITMAP memBmp = CreateCompatibleBitmap(hdc, rc.right - rc.left, rc.bottom - rc.top);
-        HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
-
-        pThis->OnDrawerPaint(memDC, rc);
-
-        BitBlt(hdc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, memDC, 0, 0, SRCCOPY);
-
-        SelectObject(memDC, oldBmp);
-        DeleteObject(memBmp);
-        DeleteDC(memDC);
-
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-
-    case WM_NCDESTROY:
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-        return DefWindowProcW(hwnd, uMsg, wParam, lParam);
     }
 
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);

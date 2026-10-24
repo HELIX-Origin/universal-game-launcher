@@ -25,14 +25,13 @@ jobs:
           token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Configure CMake
-        run: cmake -B build -S .
-
       - name: Build Release (/W4 /WX zero warnings)
-        run: cmake --build build --config Release
+        shell: pwsh
+        run: ./scripts/build.ps1 -Configuration Release
 
       - name: Run C++ Unit Tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: pwsh
+        run: ./scripts/test.ps1 -Configuration Release
 
       - name: Package Release Archive
         shell: pwsh
@@ -44,9 +43,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "build/Release/GameExplorerShell.dll" -Destination dist/ -ErrorAction Stop
           Copy-Item "build/Release/GameExplorerConfig.exe" -Destination dist/ -ErrorAction Stop
-          if (Test-Path "build/Release/GameExplorerManager.exe") {
-            Copy-Item "build/Release/GameExplorerManager.exe" -Destination dist/
-          }
+          Copy-Item "build/Release/GameExplorerManager.exe" -Destination dist/ -ErrorAction Stop
           Compress-Archive -Path "dist/*" -DestinationPath "windows-game-explorer-$tag-win64.zip" -Force
           echo "ARCHIVE=windows-game-explorer-$tag-win64.zip" >> $env:GITHUB_ENV
           echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV

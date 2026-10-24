@@ -1,6 +1,8 @@
 #include "GameExplorerCore/PlatformLauncher.h"
 #include "GameExplorerCore/StorefrontScanner.h"
 #include <filesystem>
+#include <fstream>
+#include <algorithm>
 #include <shellapi.h>
 
 namespace fs = std::filesystem;
@@ -34,17 +36,151 @@ std::wstring CleanAppId(const std::wstring& rawId, const std::wstring& prefix) {
     return rawId;
 }
 
+std::wstring ExtractExecutableFromCommandString(const std::wstring& cmd) {
+    if (cmd.empty()) return L"";
+    if (cmd.front() == L'"') {
+        const size_t nextQuote = cmd.find(L'"', 1);
+        if (nextQuote != std::wstring::npos) {
+            return cmd.substr(1, nextQuote - 1);
+        }
+    }
+    const size_t exePos = cmd.find(L".exe");
+    if (exePos != std::wstring::npos) {
+        return cmd.substr(0, exePos + 4);
+    }
+    return L"";
+}
+
+std::wstring FindAppxPackageRootFolder(const std::wstring& packagePrefix) {
+    const wchar_t* regSubKey = L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages";
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, regSubKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        return L"";
+    }
+
+    std::wstring matchedRoot;
+    wchar_t subKeyName[256] = { 0 };
+    DWORD idx = 0;
+    DWORD nameLen = ARRAYSIZE(subKeyName);
+    while (RegEnumKeyExW(hKey, idx++, subKeyName, &nameLen, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS) {
+        nameLen = ARRAYSIZE(subKeyName);
+        const std::wstring pkgName(subKeyName);
+        if (pkgName.rfind(packagePrefix, 0) == 0 && pkgName.find(L"_neutral_") == std::wstring::npos) {
+            const std::wstring pkgKey = std::wstring(regSubKey) + L"\\" + pkgName;
+            const std::wstring root = ReadRegistryString(HKEY_CURRENT_USER, pkgKey.c_str(), L"PackageRootFolder");
+            if (!root.empty() && fs::exists(root)) {
+                matchedRoot = root;
+                break;
+            }
+        }
+    }
+    RegCloseKey(hKey);
+    return matchedRoot;
+}
+
+std::wstring FindUninstallExecutable(const std::wstring& displayNameFilter, const wchar_t* targetExeName) {
+    struct HivePath {
+        HKEY root;
+        const wchar_t* subKey;
+    };
+    const HivePath hives[] = {
+        { HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall" },
+        { HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall" },
+        { HKEY_CURRENT_USER,  L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall" }
+    };
+
+    std::wstring lowerFilter = displayNameFilter;
+    std::transform(lowerFilter.begin(), lowerFilter.end(), lowerFilter.begin(), ::towlower);
+
+    for (const auto& h : hives) {
+        HKEY hParent = nullptr;
+        if (RegOpenKeyExW(h.root, h.subKey, 0, KEY_READ, &hParent) != ERROR_SUCCESS) {
+            continue;
+        }
+
+        wchar_t subKeyName[256] = { 0 };
+        DWORD idx = 0;
+        DWORD nameLen = ARRAYSIZE(subKeyName);
+        while (RegEnumKeyExW(hParent, idx++, subKeyName, &nameLen, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS) {
+            nameLen = ARRAYSIZE(subKeyName);
+            const std::wstring fullSub = std::wstring(h.subKey) + L"\\" + subKeyName;
+            std::wstring dispName = ReadRegistryString(h.root, fullSub.c_str(), L"DisplayName");
+            if (dispName.empty()) dispName = subKeyName;
+
+            std::wstring lowerDisp = dispName;
+            std::transform(lowerDisp.begin(), lowerDisp.end(), lowerDisp.begin(), ::towlower);
+            if (lowerDisp.find(lowerFilter) == std::wstring::npos) {
+                continue;
+            }
+
+            // 1. Check InstallLocation or InstallPath
+            std::wstring loc = ReadRegistryString(h.root, fullSub.c_str(), L"InstallLocation");
+            if (loc.empty()) loc = ReadRegistryString(h.root, fullSub.c_str(), L"InstallPath");
+            if (!loc.empty() && targetExeName != nullptr) {
+                const fs::path cand = fs::path(loc) / targetExeName;
+                if (fs::exists(cand)) {
+                    RegCloseKey(hParent);
+                    return cand.wstring();
+                }
+            }
+
+            // 2. Check DisplayIcon
+            const std::wstring iconStr = ReadRegistryString(h.root, fullSub.c_str(), L"DisplayIcon");
+            const std::wstring iconExe = ExtractExecutableFromCommandString(iconStr);
+            if (!iconExe.empty() && fs::exists(iconExe)) {
+                if (targetExeName != nullptr) {
+                    const fs::path sibling = fs::path(iconExe).parent_path() / targetExeName;
+                    if (fs::exists(sibling)) {
+                        RegCloseKey(hParent);
+                        return sibling.wstring();
+                    }
+                }
+                if (!StorefrontScanner::IsBlacklistedExecutable(fs::path(iconExe).filename().wstring())) {
+                    RegCloseKey(hParent);
+                    return iconExe;
+                }
+            }
+
+            // 3. Check UninstallString parent directory for targetExeName
+            if (targetExeName != nullptr) {
+                const std::wstring uninstStr = ReadRegistryString(h.root, fullSub.c_str(), L"UninstallString");
+                const std::wstring uninstExe = ExtractExecutableFromCommandString(uninstStr);
+                if (!uninstExe.empty()) {
+                    const fs::path sibling = fs::path(uninstExe).parent_path() / targetExeName;
+                    if (fs::exists(sibling)) {
+                        RegCloseKey(hParent);
+                        return sibling.wstring();
+                    }
+                }
+            }
+        }
+        RegCloseKey(hParent);
+    }
+
+    return L"";
+}
+
 } // namespace
 
 std::wstring PlatformLauncher::GetSteamExecutablePath() {
     std::wstring path = ReadRegistryString(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamExe");
-    if (!path.empty() && fs::exists(path)) return path;
+    if (!path.empty()) {
+        std::replace(path.begin(), path.end(), L'/', L'\\');
+        if (fs::exists(path)) return path;
+    }
 
     path = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Valve\\Steam", L"InstallPath");
+    if (path.empty()) {
+        path = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Valve\\Steam", L"InstallPath");
+    }
     if (!path.empty()) {
         const fs::path exe = fs::path(path) / L"steam.exe";
         if (fs::exists(exe)) return exe.wstring();
     }
+
+    const std::wstring cmd = ReadRegistryString(HKEY_CLASSES_ROOT, L"steam\\Shell\\Open\\Command", L"");
+    const std::wstring cmdExe = ExtractExecutableFromCommandString(cmd);
+    if (!cmdExe.empty() && fs::exists(cmdExe)) return cmdExe;
 
     const auto drives = StorefrontScanner::GetAllMountedDrives();
     for (const auto& drive : drives) {
@@ -58,6 +194,14 @@ std::wstring PlatformLauncher::GetSteamExecutablePath() {
 }
 
 std::wstring PlatformLauncher::GetEpicExecutablePath() {
+    const std::wstring cmd = ReadRegistryString(HKEY_CLASSES_ROOT, L"com.epicgames.launcher\\shell\\open\\command", L"");
+    const std::wstring cmdExe = ExtractExecutableFromCommandString(cmd);
+    if (!cmdExe.empty() && fs::exists(cmdExe)) return cmdExe;
+
+    const std::wstring iconCmd = ReadRegistryString(HKEY_CLASSES_ROOT, L"com.epicgames.launcher\\DefaultIcon", L"");
+    const std::wstring iconExe = ExtractExecutableFromCommandString(iconCmd);
+    if (!iconExe.empty() && fs::exists(iconExe)) return iconExe;
+
     const auto drives = StorefrontScanner::GetAllMountedDrives();
     for (const auto& drive : drives) {
         const fs::path candidates[] = {
@@ -73,11 +217,18 @@ std::wstring PlatformLauncher::GetEpicExecutablePath() {
 }
 
 std::wstring PlatformLauncher::GetGOGGalaxyExecutablePath() {
-    const std::wstring clientDir = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\GOG.com\\GalaxyClient\\paths", L"client");
+    std::wstring clientDir = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\GOG.com\\GalaxyClient\\paths", L"client");
+    if (clientDir.empty()) {
+        clientDir = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\GOG.com\\GalaxyClient\\paths", L"client");
+    }
     if (!clientDir.empty()) {
         const fs::path exe = fs::path(clientDir) / L"GalaxyClient.exe";
         if (fs::exists(exe)) return exe.wstring();
     }
+
+    const std::wstring cmd = ReadRegistryString(HKEY_CLASSES_ROOT, L"goggalaxy\\shell\\open\\command", L"");
+    const std::wstring cmdExe = ExtractExecutableFromCommandString(cmd);
+    if (!cmdExe.empty() && fs::exists(cmdExe)) return cmdExe;
 
     const auto drives = StorefrontScanner::GetAllMountedDrives();
     for (const auto& drive : drives) {
@@ -93,36 +244,45 @@ std::wstring PlatformLauncher::GetGOGGalaxyExecutablePath() {
 std::wstring PlatformLauncher::GetBattleNetExecutablePath() {
     std::wstring iconVal = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Blizzard Entertainment\\Battle.net\\Capabilities", L"ApplicationIcon");
     if (!iconVal.empty()) {
-        // Strip quotes and index: "\"E:\\Games\\Battle.net\\Battle.net.exe\",0" -> "E:\\Games\\Battle.net\\Battle.net.exe"
-        if (iconVal.front() == L'"') {
-            size_t nextQuote = iconVal.find(L'"', 1);
-            if (nextQuote != std::wstring::npos) {
-                iconVal = iconVal.substr(1, nextQuote - 1);
-            }
-        }
-        if (fs::exists(iconVal)) return iconVal;
+        const std::wstring exe = ExtractExecutableFromCommandString(iconVal);
+        if (!exe.empty() && fs::exists(exe)) return exe;
     }
+
+    const std::wstring cmd = ReadRegistryString(HKEY_CLASSES_ROOT, L"battlenet\\shell\\open\\command", L"");
+    const std::wstring cmdExe = ExtractExecutableFromCommandString(cmd);
+    if (!cmdExe.empty() && fs::exists(cmdExe)) return cmdExe;
 
     const auto drives = StorefrontScanner::GetAllMountedDrives();
     for (const auto& drive : drives) {
         const fs::path cand = fs::path(drive) / L"Games" / L"Battle.net" / L"Battle.net.exe";
         if (fs::exists(cand)) return cand.wstring();
+        const fs::path cand2 = fs::path(drive) / L"Program Files (x86)" / L"Battle.net" / L"Battle.net.exe";
+        if (fs::exists(cand2)) return cand2.wstring();
     }
 
     return L"";
 }
 
 std::wstring PlatformLauncher::GetUbisoftExecutablePath() {
-    const std::wstring installDir = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Ubisoft\\Launcher", L"InstallDir");
+    std::wstring installDir = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Ubisoft\\Launcher", L"InstallDir");
+    if (installDir.empty()) {
+        installDir = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Ubisoft\\Launcher", L"InstallDir");
+    }
     if (!installDir.empty()) {
         const fs::path exe = fs::path(installDir) / L"upc.exe";
         if (fs::exists(exe)) return exe.wstring();
     }
 
+    const std::wstring cmd = ReadRegistryString(HKEY_CLASSES_ROOT, L"uplay\\shell\\open\\command", L"");
+    const std::wstring cmdExe = ExtractExecutableFromCommandString(cmd);
+    if (!cmdExe.empty() && fs::exists(cmdExe)) return cmdExe;
+
     const auto drives = StorefrontScanner::GetAllMountedDrives();
     for (const auto& drive : drives) {
         const fs::path cand = fs::path(drive) / L"Games" / L"Ubisoft" / L"Ubisoft Game Launcher" / L"upc.exe";
         if (fs::exists(cand)) return cand.wstring();
+        const fs::path cand2 = fs::path(drive) / L"Program Files (x86)" / L"Ubisoft" / L"Ubisoft Game Launcher" / L"upc.exe";
+        if (fs::exists(cand2)) return cand2.wstring();
     }
 
     return L"";
@@ -135,6 +295,13 @@ std::wstring PlatformLauncher::GetEAAppExecutablePath() {
     path = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Electronic Arts\\EA Desktop", L"LauncherPath");
     if (!path.empty() && fs::exists(path)) return path;
 
+    const std::wstring cmd = ReadRegistryString(HKEY_CLASSES_ROOT, L"origin2\\shell\\open\\command", L"");
+    const std::wstring cmdExe = ExtractExecutableFromCommandString(cmd);
+    if (!cmdExe.empty() && fs::exists(cmdExe)) return cmdExe;
+
+    const std::wstring uninstExe = FindUninstallExecutable(L"EA app", L"EADesktop.exe");
+    if (!uninstExe.empty()) return uninstExe;
+
     const auto drives = StorefrontScanner::GetAllMountedDrives();
     for (const auto& drive : drives) {
         const fs::path cand = fs::path(drive) / L"Program Files" / L"Electronic Arts" / L"EA Desktop" / L"EA Desktop" / L"EADesktop.exe";
@@ -144,6 +311,10 @@ std::wstring PlatformLauncher::GetEAAppExecutablePath() {
 }
 
 std::wstring PlatformLauncher::GetItchExecutablePath() {
+    const std::wstring cmd = ReadRegistryString(HKEY_CURRENT_USER, L"Software\\Classes\\itch\\Shell\\Open\\Command", L"");
+    const std::wstring cmdExe = ExtractExecutableFromCommandString(cmd);
+    if (!cmdExe.empty() && fs::exists(cmdExe)) return cmdExe;
+
     wchar_t localAppData[MAX_PATH] = { 0 };
     if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
         const fs::path cand1 = fs::path(localAppData) / L"Programs" / L"itch" / L"itch.exe";
@@ -151,6 +322,240 @@ std::wstring PlatformLauncher::GetItchExecutablePath() {
 
         const fs::path cand2 = fs::path(localAppData) / L"itch" / L"itch.exe";
         if (fs::exists(cand2)) return cand2.wstring();
+
+        // Check app-* versioned folders in %LOCALAPPDATA%\itch
+        const fs::path itchRoot = fs::path(localAppData) / L"itch";
+        if (fs::exists(itchRoot)) {
+            std::error_code ec;
+            for (const auto& entry : fs::directory_iterator(itchRoot, ec)) {
+                if (entry.is_directory()) {
+                    const fs::path exe = entry.path() / L"itch.exe";
+                    if (fs::exists(exe)) return exe.wstring();
+                }
+            }
+        }
+    }
+    return L"";
+}
+
+std::wstring PlatformLauncher::GetXboxExecutablePath() {
+    const std::wstring root = FindAppxPackageRootFolder(L"Microsoft.GamingApp_");
+    if (!root.empty()) {
+        const fs::path exe1 = fs::path(root) / L"XboxPcApp.exe";
+        if (fs::exists(exe1)) return exe1.wstring();
+        const fs::path exe2 = fs::path(root) / L"XboxPcAppCE.exe";
+        if (fs::exists(exe2)) return exe2.wstring();
+    }
+
+    wchar_t localAppData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+        const fs::path aliasExe = fs::path(localAppData) / L"Microsoft" / L"WindowsApps" / L"XboxPcAppCE.exe";
+        if (fs::exists(aliasExe)) return aliasExe.wstring();
+    }
+
+    return L"";
+}
+
+std::wstring PlatformLauncher::GetXboxIconPath() {
+    const std::wstring root = FindAppxPackageRootFolder(L"Microsoft.GamingApp_");
+    if (!root.empty()) {
+        const fs::path candidates[] = {
+            fs::path(root) / L"Xbox_AppList.targetsize-256.png",
+            fs::path(root) / L"Xbox_AppList.scale-200.png",
+            fs::path(root) / L"Xbox_StoreLogo.scale-200.png",
+            fs::path(root) / L"Xbox_SysTrayLogo.ico",
+            fs::path(root) / L"XboxPcApp.exe"
+        };
+        for (const auto& cand : candidates) {
+            if (fs::exists(cand)) return cand.wstring();
+        }
+    }
+    return GetXboxExecutablePath();
+}
+
+std::wstring PlatformLauncher::GetAmazonExecutablePath() {
+    wchar_t localAppData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+        const fs::path cand = fs::path(localAppData) / L"Amazon Games" / L"App" / L"Amazon Games.exe";
+        if (fs::exists(cand)) return cand.wstring();
+    }
+    return FindUninstallExecutable(L"Amazon Games", L"Amazon Games.exe");
+}
+
+std::wstring PlatformLauncher::GetLegacyGamesExecutablePath() {
+    const std::wstring uninst = FindUninstallExecutable(L"Legacy Games Launcher", L"Legacy Games Launcher.exe");
+    if (!uninst.empty()) return uninst;
+
+    wchar_t localAppData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+        const fs::path cand = fs::path(localAppData) / L"Programs" / L"legacy-games-launcher" / L"Legacy Games Launcher.exe";
+        if (fs::exists(cand)) return cand.wstring();
+    }
+
+    const auto drives = StorefrontScanner::GetAllMountedDrives();
+    for (const auto& drive : drives) {
+        const fs::path cand = fs::path(drive) / L"Program Files" / L"Legacy Games" / L"Legacy Games Launcher" / L"Legacy Games Launcher.exe";
+        if (fs::exists(cand)) return cand.wstring();
+    }
+    return L"";
+}
+
+std::wstring PlatformLauncher::GetJagexExecutablePath() {
+    const std::wstring uninst = FindUninstallExecutable(L"Jagex Launcher", L"JagexLauncher.exe");
+    if (!uninst.empty()) return uninst;
+
+    wchar_t localAppData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+        const fs::path cand = fs::path(localAppData) / L"Programs" / L"Jagex Launcher" / L"JagexLauncher.exe";
+        if (fs::exists(cand)) return cand.wstring();
+    }
+
+    const auto drives = StorefrontScanner::GetAllMountedDrives();
+    for (const auto& drive : drives) {
+        const fs::path cand1 = fs::path(drive) / L"Program Files (x86)" / L"Jagex Launcher" / L"JagexLauncher.exe";
+        if (fs::exists(cand1)) return cand1.wstring();
+        const fs::path cand2 = fs::path(drive) / L"Program Files" / L"Jagex Launcher" / L"JagexLauncher.exe";
+        if (fs::exists(cand2)) return cand2.wstring();
+    }
+    return L"";
+}
+
+std::wstring PlatformLauncher::GetXIVLauncherExecutablePath() {
+    wchar_t localAppData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+        const fs::path xivRoot = fs::path(localAppData) / L"XIVLauncher";
+        const fs::path directExe = xivRoot / L"XIVLauncher.exe";
+        if (fs::exists(directExe)) return directExe.wstring();
+
+        if (fs::exists(xivRoot)) {
+            std::error_code ec;
+            for (const auto& entry : fs::directory_iterator(xivRoot, ec)) {
+                if (entry.is_directory()) {
+                    const fs::path exe = entry.path() / L"XIVLauncher.exe";
+                    if (fs::exists(exe)) return exe.wstring();
+                }
+            }
+        }
+    }
+    return FindUninstallExecutable(L"XIVLauncher", L"XIVLauncher.exe");
+}
+
+std::wstring PlatformLauncher::GetGuildWars2ExecutablePath() {
+    wchar_t appData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"APPDATA", appData, MAX_PATH) > 0) {
+        const fs::path xmlPath = fs::path(appData) / L"Guild Wars 2" / L"GFXSettings.Gw2-64.exe.xml";
+        if (fs::exists(xmlPath)) {
+            std::wifstream stream(xmlPath);
+            std::wstring line;
+            while (std::getline(stream, line)) {
+                if (line.find(L"INSTALLPATH") != std::wstring::npos) {
+                    const size_t valPos = line.find(L"Value=\"");
+                    if (valPos != std::wstring::npos) {
+                        const size_t endQuote = line.find(L'"', valPos + 7);
+                        if (endQuote != std::wstring::npos) {
+                            const fs::path installDir = line.substr(valPos + 7, endQuote - (valPos + 7));
+                            const fs::path exe = installDir / L"Gw2-64.exe";
+                            if (fs::exists(exe)) return exe.wstring();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    const std::wstring uninst = FindUninstallExecutable(L"Guild Wars 2", L"Gw2-64.exe");
+    if (!uninst.empty()) return uninst;
+
+    const auto drives = StorefrontScanner::GetAllMountedDrives();
+    for (const auto& drive : drives) {
+        const fs::path cands[] = {
+            fs::path(drive) / L"Program Files" / L"Guild Wars 2" / L"Gw2-64.exe",
+            fs::path(drive) / L"Program Files (x86)" / L"Guild Wars 2" / L"Gw2-64.exe",
+            fs::path(drive) / L"Games" / L"Guild Wars 2" / L"Gw2-64.exe"
+        };
+        for (const auto& c : cands) {
+            if (fs::exists(c)) return c.wstring();
+        }
+    }
+    return L"";
+}
+
+std::wstring PlatformLauncher::GetRockstarExecutablePath() {
+    std::wstring folder = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Rockstar Games\\Launcher", L"InstallFolder");
+    if (folder.empty()) {
+        folder = ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Rockstar Games\\Launcher", L"InstallFolder");
+    }
+    if (!folder.empty()) {
+        const fs::path exe = fs::path(folder) / L"LauncherPatcher.exe";
+        if (fs::exists(exe)) return exe.wstring();
+        const fs::path exe2 = fs::path(folder) / L"Launcher.exe";
+        if (fs::exists(exe2)) return exe2.wstring();
+    }
+    return FindUninstallExecutable(L"Rockstar Games Launcher", L"Launcher.exe");
+}
+
+std::wstring PlatformLauncher::GetRiotExecutablePath() {
+    wchar_t progData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"PROGRAMDATA", progData, MAX_PATH) > 0) {
+        const fs::path jsonPath = fs::path(progData) / L"Riot Games" / L"RiotClientInstalls.json";
+        if (fs::exists(jsonPath)) {
+            std::wifstream stream(jsonPath);
+            std::wstring line;
+            while (std::getline(stream, line)) {
+                const size_t pos = line.find(L"RiotClientServices.exe");
+                if (pos != std::wstring::npos) {
+                    const size_t startQuote = line.rfind(L'"', pos);
+                    if (startQuote != std::wstring::npos) {
+                        std::wstring p = line.substr(startQuote + 1, (pos + 22) - (startQuote + 1));
+                        std::replace(p.begin(), p.end(), L'/', L'\\');
+                        if (fs::exists(p)) return p;
+                    }
+                }
+            }
+        }
+    }
+    return FindUninstallExecutable(L"Riot Client", L"RiotClientServices.exe");
+}
+
+std::wstring PlatformLauncher::GetHoYoPlayExecutablePath() {
+    const std::wstring uninst = FindUninstallExecutable(L"HoYoPlay", L"launcher.exe");
+    if (!uninst.empty()) return uninst;
+
+    const auto drives = StorefrontScanner::GetAllMountedDrives();
+    for (const auto& drive : drives) {
+        const fs::path cands[] = {
+            fs::path(drive) / L"Program Files" / L"HoYoPlay" / L"launcher.exe",
+            fs::path(drive) / L"Games" / L"HoYoPlay" / L"launcher.exe"
+        };
+        for (const auto& c : cands) {
+            if (fs::exists(c)) return c.wstring();
+        }
+    }
+    return L"";
+}
+
+std::wstring PlatformLauncher::GetParadoxExecutablePath() {
+    wchar_t localAppData[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+        const fs::path cand = fs::path(localAppData) / L"Programs" / L"Paradox Interactive" / L"bootstrapper-v2.exe";
+        if (fs::exists(cand)) return cand.wstring();
+    }
+    return FindUninstallExecutable(L"Paradox Launcher", L"bootstrapper-v2.exe");
+}
+
+std::wstring PlatformLauncher::GetESDEExecutablePath() {
+    const std::wstring uninst = FindUninstallExecutable(L"ES-DE", L"ES-DE.exe");
+    if (!uninst.empty()) return uninst;
+
+    const auto drives = StorefrontScanner::GetAllMountedDrives();
+    for (const auto& drive : drives) {
+        const fs::path cands[] = {
+            fs::path(drive) / L"Games" / L"ES-DE" / L"ES-DE.exe",
+            fs::path(drive) / L"Program Files" / L"ES-DE" / L"ES-DE.exe"
+        };
+        for (const auto& c : cands) {
+            if (fs::exists(c)) return c.wstring();
+        }
     }
     return L"";
 }
@@ -242,7 +647,15 @@ bool PlatformLauncher::Launch(HWND hwndOwner, const GameItem& game) {
         }
     }
 
-    // 5. ITCH.IO & STANDALONE & SQUARE ENIX (FFXIV):
+    // 5. XBOX / MICROSOFT STORE: Prefer AppX shell:AppsFolder\<PackageFamilyName>!App activation if launchUri is set
+    if (game.platform == PlatformType::Xbox && !game.launchUri.empty()) {
+        const auto res = reinterpret_cast<INT_PTR>(
+            ShellExecuteW(hwndOwner, L"open", game.launchUri.c_str(), nullptr, nullptr, SW_SHOWNORMAL)
+        );
+        if (res > 32) return true;
+    }
+
+    // 6. ITCH.IO & STANDALONE & SQUARE ENIX (FFXIV):
     // DRM-free stores: Direct executable invocation is the most reliable, optimal method (zero client required)
     if (!game.executablePath.empty()) {
         const wchar_t* pArgs = game.launchArguments.empty() ? nullptr : game.launchArguments.c_str();

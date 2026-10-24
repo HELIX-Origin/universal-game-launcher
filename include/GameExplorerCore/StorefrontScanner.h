@@ -30,11 +30,19 @@ public:
     static std::vector<GameItem> ScanEA();
     static std::vector<GameItem> ScanAmazon();
     static std::vector<GameItem> ScanXbox();
+    static std::vector<GameItem> ScanBattleNet();
+    static std::vector<GameItem> ScanLegacyGames();
+    static std::vector<GameItem> ScanJagex();
+    static std::vector<GameItem> ScanXIVLauncher();
+    static std::vector<GameItem> ScanGuildWars2();
+    static std::vector<GameItem> ScanRiot();
+    static std::vector<GameItem> ScanHoYoPlay();
     static std::vector<GameItem> ScanStandaloneAndDrives();
     static std::vector<GameItem> ScanCustomGames();
 
-    // Manual addition of custom local game executables
+    // Manual addition and removal of custom local game executables
     static bool AddCustomLocalGame(const std::wstring& executablePath, const std::wstring& customTitle = L"");
+    static bool RemoveCustomLocalGame(const std::wstring& appId);
 
     // Utility & filtering helpers
     static bool IsBlacklistedExecutable(const std::wstring& filename);

@@ -33,6 +33,16 @@ std::wstring GetPlatformCompany(PlatformType platform) {
     case PlatformType::EAApp: return L"Electronic Arts";
     case PlatformType::Itch: return L"itch corp.";
     case PlatformType::Xbox: return L"Microsoft Corporation";
+    case PlatformType::Amazon: return L"Amazon.com, Inc.";
+    case PlatformType::LegacyGames: return L"Legacy Games, Inc.";
+    case PlatformType::Jagex: return L"Jagex Ltd";
+    case PlatformType::XIVLauncher: return L"Goatcorp / FFXIV";
+    case PlatformType::GuildWars2: return L"ArenaNet";
+    case PlatformType::Rockstar: return L"Rockstar Games";
+    case PlatformType::Riot: return L"Riot Games";
+    case PlatformType::HoYoPlay: return L"COGNOSPHERE";
+    case PlatformType::Paradox: return L"Paradox Interactive";
+    case PlatformType::ESDE: return L"EmulationStation DE";
     default: return L"Game Provider";
     }
 }
@@ -46,6 +56,17 @@ std::wstring GetPlatformExecutablePath(PlatformType platform) {
     case PlatformType::Ubisoft: return PlatformLauncher::GetUbisoftExecutablePath();
     case PlatformType::EAApp: return PlatformLauncher::GetEAAppExecutablePath();
     case PlatformType::Itch: return PlatformLauncher::GetItchExecutablePath();
+    case PlatformType::Xbox: return PlatformLauncher::GetXboxExecutablePath();
+    case PlatformType::Amazon: return PlatformLauncher::GetAmazonExecutablePath();
+    case PlatformType::LegacyGames: return PlatformLauncher::GetLegacyGamesExecutablePath();
+    case PlatformType::Jagex: return PlatformLauncher::GetJagexExecutablePath();
+    case PlatformType::XIVLauncher: return PlatformLauncher::GetXIVLauncherExecutablePath();
+    case PlatformType::GuildWars2: return PlatformLauncher::GetGuildWars2ExecutablePath();
+    case PlatformType::Rockstar: return PlatformLauncher::GetRockstarExecutablePath();
+    case PlatformType::Riot: return PlatformLauncher::GetRiotExecutablePath();
+    case PlatformType::HoYoPlay: return PlatformLauncher::GetHoYoPlayExecutablePath();
+    case PlatformType::Paradox: return PlatformLauncher::GetParadoxExecutablePath();
+    case PlatformType::ESDE: return PlatformLauncher::GetESDEExecutablePath();
     default: return L"";
     }
 }
@@ -412,60 +433,6 @@ IFACEMETHODIMP ShellFolder::CompareIDs(LPARAM /*lParam*/, PCUIDLIST_RELATIVE pid
     return MAKE_HRESULT(SEVERITY_SUCCESS, 0, static_cast<unsigned short>(code));
 }
 
-class GameFolderViewCB final : public IShellFolderViewCB {
-public:
-    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
-        if (ppv == nullptr) return E_POINTER;
-        *ppv = nullptr;
-        if (riid == IID_IUnknown || riid == IID_IShellFolderViewCB) {
-            *ppv = static_cast<IShellFolderViewCB*>(this);
-            AddRef();
-            return S_OK;
-        }
-        return E_NOINTERFACE;
-    }
-
-    IFACEMETHODIMP_(ULONG) AddRef() override { return ++m_refCount; }
-    IFACEMETHODIMP_(ULONG) Release() override {
-        const ULONG c = --m_refCount;
-        if (c == 0) delete this;
-        return c;
-    }
-
-    IFACEMETHODIMP MessageSFVCB(UINT uMsg, WPARAM /*wParam*/, LPARAM lParam) override {
-        if (uMsg == SFVM_DEFVIEWMODE && lParam != 0) {
-            const auto layout = SettingsManager::GetLayoutMode();
-            FOLDERVIEWMODE mode = FVM_TILE;
-            if (layout == LayoutMode::DetailsView) {
-                mode = FVM_DETAILS;
-            } else if (layout == LayoutMode::CoverArt) {
-                mode = FVM_THUMBNAIL;
-            }
-            *reinterpret_cast<FOLDERVIEWMODE*>(lParam) = mode;
-            return S_OK;
-        }
-        if (uMsg == SFVM_GETSORTDEFAULTS && lParam != 0) {
-            auto* pSort = reinterpret_cast<int*>(lParam);
-            pSort[0] = 0; // ColTitle
-            pSort[1] = 1; // Ascending
-            return S_OK;
-        }
-        if (uMsg == SFVM_SETISFV && lParam != 0) {
-            auto* pView = reinterpret_cast<IUnknown*>(lParam);
-            IFolderView2* pFv2 = nullptr;
-            if (SUCCEEDED(pView->QueryInterface(IID_IFolderView2, reinterpret_cast<void**>(&pFv2)))) {
-                pFv2->SetGroupBy(PKEY_ItemTypeText, TRUE);
-                pFv2->Release();
-            }
-            return S_OK;
-        }
-        return E_NOTIMPL;
-    }
-
-private:
-    std::atomic<ULONG> m_refCount{ 1 };
-};
-
 IFACEMETHODIMP ShellFolder::CreateViewObject(HWND /*hwndOwner*/, REFIID riid, void** ppv) {
     if (ppv == nullptr) return E_POINTER;
     *ppv = nullptr;
@@ -478,15 +445,10 @@ IFACEMETHODIMP ShellFolder::CreateViewObject(HWND /*hwndOwner*/, REFIID riid, vo
     }
 
     if (riid == IID_IShellView) {
-        SFV_CREATE sfv{};
-        sfv.cbSize = sizeof(sfv);
-        sfv.pshf = this;
-        auto* pCb = new (std::nothrow) GameFolderViewCB();
-        sfv.psfvcb = pCb;
-        const HRESULT hr = SHCreateShellFolderView(&sfv, reinterpret_cast<IShellView**>(ppv));
-        if (pCb != nullptr) {
-            pCb->Release();
-        }
+        auto* pView = new (std::nothrow) ShellView(this);
+        if (pView == nullptr) return E_OUTOFMEMORY;
+        const HRESULT hr = pView->QueryInterface(riid, ppv);
+        pView->Release();
         return hr;
     }
 
@@ -605,11 +567,13 @@ public:
         InsertMenuW(hmenu, indexMenu, MF_BYPOSITION | MF_STRING, idCmdFirst + 0, L"\u25B6 Play Game");
         SetMenuDefaultItem(hmenu, idCmdFirst + 0, FALSE);
 
+        InsertMenuW(hmenu, indexMenu + 1, MF_BYPOSITION | MF_STRING, idCmdFirst + 1, L"Edit in Game Explorer Manager...");
+
         if (!m_item.workingDirectory.empty() && fs::exists(m_item.workingDirectory)) {
-            InsertMenuW(hmenu, indexMenu + 1, MF_BYPOSITION | MF_STRING, idCmdFirst + 1, L"Open Game Directory");
+            InsertMenuW(hmenu, indexMenu + 2, MF_BYPOSITION | MF_STRING, idCmdFirst + 2, L"Open Game Directory");
         }
 
-        return MAKE_HRESULT(SEVERITY_SUCCESS, 0, 2);
+        return MAKE_HRESULT(SEVERITY_SUCCESS, 0, 3);
     }
 
     IFACEMETHODIMP InvokeCommand(CMINVOKECOMMANDINFO* pici) override {
@@ -618,8 +582,10 @@ public:
         if (HIWORD(pici->lpVerb) != 0) {
             if (_stricmp(pici->lpVerb, "open") == 0 || _stricmp(pici->lpVerb, "play") == 0) {
                 cmd = 0;
-            } else {
+            } else if (_stricmp(pici->lpVerb, "edit") == 0) {
                 cmd = 1;
+            } else {
+                cmd = 2;
             }
         } else {
             cmd = LOWORD(pici->lpVerb);
@@ -631,6 +597,16 @@ public:
             }
             return E_FAIL;
         } else if (cmd == 1) {
+            wchar_t dllPath[MAX_PATH] = { 0 };
+            if (GetModuleFileNameW(g_hInstance, dllPath, MAX_PATH) > 0) {
+                const fs::path dir = fs::path(dllPath).parent_path();
+                const fs::path managerExe = dir / L"GameExplorerManager.exe";
+                if (fs::exists(managerExe)) {
+                    ShellExecuteW(pici->hwnd, L"open", managerExe.c_str(), m_item.appId.c_str(), dir.c_str(), SW_SHOWNORMAL);
+                    return S_OK;
+                }
+            }
+        } else if (cmd == 2) {
             if (!m_item.workingDirectory.empty() && fs::exists(m_item.workingDirectory)) {
                 ShellExecuteW(nullptr, L"open", m_item.workingDirectory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 return S_OK;

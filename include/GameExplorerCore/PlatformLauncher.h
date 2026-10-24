@@ -19,6 +19,18 @@ public:
     static std::wstring GetUbisoftExecutablePath();
     static std::wstring GetEAAppExecutablePath();
     static std::wstring GetItchExecutablePath();
+    static std::wstring GetXboxExecutablePath();
+    static std::wstring GetXboxIconPath();
+    static std::wstring GetAmazonExecutablePath();
+    static std::wstring GetLegacyGamesExecutablePath();
+    static std::wstring GetJagexExecutablePath();
+    static std::wstring GetXIVLauncherExecutablePath();
+    static std::wstring GetGuildWars2ExecutablePath();
+    static std::wstring GetRockstarExecutablePath();
+    static std::wstring GetRiotExecutablePath();
+    static std::wstring GetHoYoPlayExecutablePath();
+    static std::wstring GetParadoxExecutablePath();
+    static std::wstring GetESDEExecutablePath();
 };
 
 } // namespace GameExplorer

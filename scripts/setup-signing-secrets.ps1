@@ -1,5 +1,8 @@
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification = 'Intentional plain-text string for non-sensitive PFX password and GitHub CLI secret piping')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Interactive CLI setup script')]
 param(
   [string]$CertPath = "certificates/certificate.pfx",
+  [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
   [string]$Password = "youshallnotpass",
   [string]$Repo = ""
 )
@@ -27,7 +30,9 @@ if (-not $Repo) {
     if ($origin -match "github\.com[:/]([^/]+/[^/.]+?)(\.git)?$") {
       $Repo = $matches[1]
     }
-  } catch {}
+  } catch {
+    Write-Verbose "Could not detect git remote origin URL: $_"
+  }
 }
 
 if (-not $Repo) {

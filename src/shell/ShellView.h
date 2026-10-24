@@ -4,7 +4,8 @@
 #include <shlobj.h>
 #include <atomic>
 #include <vector>
-#include <optional>
+#include <string>
+#include <memory>
 #include "GameExplorerCore/Models.h"
 #include "GameExplorerCore/Types.h"
 #include "GameExplorerCore/DarkMode.h"
@@ -13,10 +14,18 @@ namespace GameExplorer {
 
 class ShellFolder;
 
+struct ProviderViewModel {
+    PlatformType platform{ PlatformType::Unknown };
+    std::wstring name;
+    std::wstring company;
+    std::wstring executablePath;
+    std::wstring iconPngPath;
+};
+
 class ShellView final : public IShellView, public IOleCommandTarget {
 public:
     explicit ShellView(ShellFolder* pFolder);
-    ~ShellView();
+    virtual ~ShellView();
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -50,59 +59,35 @@ public:
     IFACEMETHODIMP Exec(const GUID* pguidCmdGroup, DWORD nCmdID, DWORD nCmdexecopt, VARIANT* pvaIn, VARIANT* pvaOut) override;
 
 private:
-    static LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-    static LRESULT CALLBACK DrawerProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+    struct XamlState;
 
-    void OnPaint(HDC hdc, const RECT& rc);
-    void OnDrawerPaint(HDC hdc, const RECT& rc);
-    void OnSize(int cx, int cy);
-    void OnLButtonDown(int x, int y);
-    void OnKeyDown(WPARAM key);
-    void LaunchSelectedGame();
+    static LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
     void RefreshData();
-    void UpdateDrawerLayout();
-    void UpdateThemeState();
-    void InitializeFonts();
-    void CleanupFonts();
-    void UpdateScrollMetrics();
-    void ScrollTo(int newY);
-    void UpdateCachedCover(const GameItem& game);
-    void FreeCachedCover();
+    void BuildXamlViewport();
+    void RebuildSidepane();
+    void SwitchLayoutMode(LayoutMode mode);
+    void LaunchCompanionExe(const wchar_t* exeName, const std::wstring& args = L"");
 
     std::atomic<ULONG> m_refCount{ 1 };
     ShellFolder* m_pFolder{ nullptr };
     IShellBrowser* m_pShellBrowser{ nullptr };
-    
+
     HWND m_hwndView{ nullptr };
-    HWND m_hwndCanvas{ nullptr };
-    HWND m_hwndDrawer{ nullptr };
-    HWND m_hwndLaunchBtn{ nullptr };
-    HWND m_hwndListView{ nullptr };
+    HWND m_hwndXamlIsland{ nullptr };
+    std::unique_ptr<XamlState> m_xaml;
 
     FOLDERSETTINGS m_folderSettings{};
-    LayoutMode m_layoutMode{ LayoutMode::DetailsView };
+    LayoutMode m_layoutMode{ LayoutMode::CoverArt };
+    std::vector<ProviderViewModel> m_providers;
     std::vector<GameItem> m_games;
-    int m_selectedIndex{ -1 };
 
-    // Cached sidepane cover bitmap
-    HBITMAP m_hCachedCoverBmp{ nullptr };
-    int64_t m_cachedCoverGameId{ -1 };
-
-    // Layout metrics
-    int m_drawerWidth{ 320 };
-    bool m_isDrawerVisible{ true };
-    bool m_isDarkMode{ false };
+    int m_selectedGameIndex{ -1 };
+    int m_selectedProviderIndex{ -1 };
+    bool m_providersExpanded{ true };
+    bool m_gamesExpanded{ true };
+    bool m_isDarkMode{ true };
     UINT m_uState{ SVUIA_DEACTIVATE };
-    int m_scrollY{ 0 };
-    int m_contentHeight{ 0 };
-    ThemePalette m_palette{};
-
-    // Typography
-    HFONT m_hFontDrawerTitle{ nullptr };
-    HFONT m_hFontTitle{ nullptr };
-    HFONT m_hFontBody{ nullptr };
-    HFONT m_hFontSub{ nullptr };
-    HBRUSH m_hDrawerBrush{ nullptr };
 };
 
 } // namespace GameExplorer
