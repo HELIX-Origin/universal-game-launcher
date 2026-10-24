@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <vector>
+#include <thread>
+#include <atomic>
 #include "GameExplorerCore/DarkMode.h"
 #include "GameExplorerCore/Settings.h"
 #include "GameExplorerCore/Database.h"
@@ -74,9 +76,10 @@ TitleButton HitTestTitleButtons(int x, int y, int w) {
     return TitleButton::None;
 }
 
-constexpr int IDC_BTN_TOGGLE_INTEGRATION = 2000;
 constexpr int IDC_LBL_INTEGRATION_STATUS = 2001;
 constexpr int IDC_BTN_OPEN_EXPLORER      = 2002;
+constexpr int IDC_BTN_SCAN_LIBRARY       = 2003;
+constexpr int WM_APP_SCAN_COMPLETE       = WM_APP + 50;
 
 constexpr int IDC_RAD_LAYOUT_COVER       = 2005;
 constexpr int IDC_RAD_LAYOUT_HERO        = 2006;
@@ -88,8 +91,9 @@ constexpr int IDC_BTN_OPEN_METADATA_DIR  = 2013;
 constexpr int IDC_CHK_ONEDRIVE           = 2030;
 constexpr int IDC_BTN_SAVE               = 2031;
 
-HWND g_hwndBtnToggleIntegration = nullptr;
 HWND g_hwndLblIntegrationStatus = nullptr;
+HWND g_hwndBtnScanLibrary       = nullptr;
+std::atomic<bool> g_isScanning{ false };
 
 HWND g_hwndRadLayoutCover   = nullptr;
 HWND g_hwndRadLayoutHero    = nullptr;
@@ -109,7 +113,21 @@ HBRUSH g_hCardBrush = nullptr;
 bool IsIntegrationEnabled() {
     HKEY hKey = nullptr;
     const std::wstring clsidKey = std::wstring(L"Software\\Classes\\CLSID\\") + SZ_CLSID_GAME_EXPLORER;
+    const std::wstring nsKey = std::wstring(L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Desktop\\NameSpace\\") + SZ_CLSID_GAME_EXPLORER;
+
     if (RegOpenKeyExW(HKEY_CURRENT_USER, clsidKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return true;
+    }
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, nsKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return true;
+    }
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, clsidKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return true;
+    }
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, nsKey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         RegCloseKey(hKey);
         return true;
     }
@@ -121,55 +139,11 @@ void UpdateIntegrationStatusUI() {
     if (g_hwndLblIntegrationStatus != nullptr) {
         SetWindowTextW(
             g_hwndLblIntegrationStatus,
-            enabled ? L"Integration Status: \u25CF Enabled (Pinned in File Explorer && Namespace Active)"
-                    : L"Integration Status: \u25CB Disabled (Not Registered in File Explorer)"
+            enabled ? L"Integration Status: \u25CF Registered in File Explorer (Testing: admin 'regsvr32 /u GameExplorerShell.dll')"
+                    : L"Integration Status: \u25CB Not Registered (Testing: admin 'regsvr32 GameExplorerShell.dll')"
         );
         InvalidateRect(g_hwndLblIntegrationStatus, nullptr, TRUE);
     }
-    if (g_hwndBtnToggleIntegration != nullptr) {
-        InvalidateRect(g_hwndBtnToggleIntegration, nullptr, TRUE);
-    }
-}
-
-void ToggleIntegration(HWND hwndParent) {
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    const fs::path dir = fs::path(exePath).parent_path();
-    const fs::path dllPath = dir / L"GameExplorerShell.dll";
-
-    if (!fs::exists(dllPath)) {
-        MessageBoxW(hwndParent, L"GameExplorerShell.dll not found in the application directory.", L"Error", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    const bool currentlyEnabled = IsIntegrationEnabled();
-
-    std::wstring cmd = L"regsvr32.exe /s " + (currentlyEnabled ? (L"/u \"" + dllPath.wstring() + L"\"") : (L"\"" + dllPath.wstring() + L"\""));
-
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi{};
-
-    std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
-    cmdBuf.push_back(L'\0');
-
-    if (CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 3000);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-    }
-
-    UpdateIntegrationStatusUI();
-    const bool nowEnabled = IsIntegrationEnabled();
-
-    MessageBoxW(
-        hwndParent,
-        nowEnabled
-            ? L"Windows Game Explorer shell integration has been enabled.\n\nThe Games folder is now pinned alongside Home and Gallery in File Explorer."
-            : L"Windows Game Explorer shell integration has been disabled.\n\nThe Games folder has been removed from File Explorer.",
-        L"Windows Game Explorer",
-        MB_OK | MB_ICONINFORMATION
-    );
 }
 
 void LaunchGameExplorerManager(HWND hwndParent) {
@@ -200,11 +174,34 @@ void LoadConfigValues() {
 
 BOOL CALLBACK BroadcastRefreshToShellViews(HWND hwnd, LPARAM lParam) {
     wchar_t cls[128] = { 0 };
-    if (GetClassNameW(hwnd, cls, 128) > 0 && wcscmp(cls, L"GameExplorerNativeView") == 0) {
+    if (GetClassNameW(hwnd, cls, 128) > 0 && (wcscmp(cls, L"GameExplorerXamlHostViewClass") == 0 || wcscmp(cls, L"GameExplorerNativeView") == 0)) {
         PostMessageW(hwnd, WM_APP + 42, 0, 0);
     }
     EnumChildWindows(hwnd, BroadcastRefreshToShellViews, lParam);
     return TRUE;
+}
+
+void ScanAndPopulateLibrary(HWND hwndParent) {
+    if (g_isScanning.load()) {
+        return;
+    }
+    g_isScanning.store(true);
+    EnableWindow(g_hwndBtnScanLibrary, FALSE);
+    InvalidateRect(g_hwndBtnScanLibrary, nullptr, TRUE);
+
+    std::thread([hwndParent]() {
+        auto& db = Database::Instance();
+        if (!db.IsOpen()) {
+            db.Open(Storage::GetDatabasePath());
+        }
+
+        const size_t count = StorefrontScanner::ScanAll(db);
+
+        SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, Storage::GetUserRootPath().c_str(), nullptr);
+        EnumWindows(BroadcastRefreshToShellViews, 0);
+
+        PostMessageW(hwndParent, WM_APP_SCAN_COMPLETE, static_cast<WPARAM>(count), 0);
+    }).detach();
 }
 
 void SaveConfigValues(HWND hwndParent) {
@@ -253,15 +250,15 @@ LRESULT CALLBACK ConfigWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
             36, card0Y + 34, 540, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LBL_INTEGRATION_STATUS)), nullptr, nullptr);
         SendMessageW(g_hwndLblIntegrationStatus, WM_SETFONT, reinterpret_cast<WPARAM>(g_hFont), TRUE);
 
-        g_hwndBtnToggleIntegration = CreateWindowExW(0, L"BUTTON", L"Enable Integration",
-            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            36, card0Y + 58, 170, 32, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_BTN_TOGGLE_INTEGRATION)), nullptr, nullptr);
-        SendMessageW(g_hwndBtnToggleIntegration, WM_SETFONT, reinterpret_cast<WPARAM>(g_hFontBold), TRUE);
-
         HWND hBtnOpen = CreateWindowExW(0, L"BUTTON", L"Open Games in File Explorer",
             WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            218, card0Y + 58, 220, 32, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_BTN_OPEN_EXPLORER)), nullptr, nullptr);
+            36, card0Y + 58, 260, 32, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_BTN_OPEN_EXPLORER)), nullptr, nullptr);
         SendMessageW(hBtnOpen, WM_SETFONT, reinterpret_cast<WPARAM>(g_hFont), TRUE);
+
+        g_hwndBtnScanLibrary = CreateWindowExW(0, L"BUTTON", L"Scan & Populate Library",
+            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            310, card0Y + 58, 260, 32, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_BTN_SCAN_LIBRARY)), nullptr, nullptr);
+        SendMessageW(g_hwndBtnScanLibrary, WM_SETFONT, reinterpret_cast<WPARAM>(g_hFontBold), TRUE);
 
         // Card 1: Default WinUI XAML Viewport Layout & Game Explorer Manager
         constexpr int card1Y = card0Y + 105 + 12;
@@ -650,13 +647,13 @@ LRESULT CALLBACK ConfigWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
             DrawTextW(hdcBtn, text, -1, &rcBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         };
 
-        if (pDis->CtlID == IDC_BTN_TOGGLE_INTEGRATION) {
-            const bool enabled = IsIntegrationEnabled();
-            drawStyledButton(enabled ? L"Disable Integration" : L"Enable Integration", enabled, true);
-            return TRUE;
-        }
         if (pDis->CtlID == IDC_BTN_OPEN_EXPLORER) {
             drawStyledButton(L"Open Games in File Explorer", false, false);
+            return TRUE;
+        }
+        if (pDis->CtlID == IDC_BTN_SCAN_LIBRARY) {
+            const bool scanning = g_isScanning.load();
+            drawStyledButton(scanning ? L"Scanning..." : L"Scan & Populate Library", scanning, true);
             return TRUE;
         }
         if (pDis->CtlID == IDC_BTN_LAUNCH_MANAGER) {
@@ -676,10 +673,6 @@ LRESULT CALLBACK ConfigWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
 
     case WM_COMMAND: {
         const int id = LOWORD(wParam);
-        if (id == IDC_BTN_TOGGLE_INTEGRATION) {
-            ToggleIntegration(hwnd);
-            return 0;
-        }
         if (id == IDC_BTN_SAVE) {
             SaveConfigValues(hwnd);
             return 0;
@@ -687,6 +680,10 @@ LRESULT CALLBACK ConfigWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
         if (id == IDC_BTN_OPEN_EXPLORER) {
             const std::wstring cmd = std::wstring(L"::") + SZ_CLSID_GAME_EXPLORER;
             ShellExecuteW(hwnd, L"open", L"explorer.exe", cmd.c_str(), nullptr, SW_SHOWNORMAL);
+            return 0;
+        }
+        if (id == IDC_BTN_SCAN_LIBRARY) {
+            ScanAndPopulateLibrary(hwnd);
             return 0;
         }
         if (id == IDC_BTN_LAUNCH_MANAGER) {
@@ -700,6 +697,17 @@ LRESULT CALLBACK ConfigWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPara
             return 0;
         }
         break;
+    }
+
+    case WM_APP_SCAN_COMPLETE: {
+        g_isScanning.store(false);
+        EnableWindow(g_hwndBtnScanLibrary, TRUE);
+        InvalidateRect(g_hwndBtnScanLibrary, nullptr, TRUE);
+        const size_t count = static_cast<size_t>(wParam);
+        std::wstring msg = L"Scan complete!\n\nDiscovered " + std::to_wstring(count) +
+                           L" game(s) across installed storefronts.\nYour Windows Game Explorer library has been updated.";
+        MessageBoxW(hwnd, msg.c_str(), L"Windows Game Explorer", MB_OK | MB_ICONINFORMATION);
+        return 0;
     }
 
     case WM_CTLCOLORSTATIC:

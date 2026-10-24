@@ -1,6 +1,7 @@
 #include "TestHarness.h"
 #include "GameExplorerCore/StorefrontScanner.h"
 #include "GameExplorerCore/Storage.h"
+#include "GameExplorerCore/Database.h"
 #include <filesystem>
 #include <fstream>
 
@@ -88,4 +89,28 @@ TEST_CASE(CustomLocalGameLifecycle) {
     if (fs::exists(tempExe)) {
         fs::remove(tempExe);
     }
+}
+
+TEST_CASE(ScannerScanAllPrunesObsoleteGames) {
+    const fs::path tempDbPath = fs::temp_directory_path() / L"GameExplorer_TestPrune.db";
+    if (fs::exists(tempDbPath)) fs::remove(tempDbPath);
+
+    auto& db = GameExplorer::Database::Instance();
+    // Use direct sqlite or test db
+    ASSERT_TRUE(db.Open(tempDbPath));
+    ASSERT_TRUE(db.InitializeSchema());
+
+    GameExplorer::GameItem obsolete;
+    obsolete.appId = L"itch_bogus_ghost_999";
+    obsolete.title = L"Bogus Ghost Game";
+    obsolete.platform = GameExplorer::PlatformType::Itch;
+    ASSERT_TRUE(db.UpsertGame(obsolete));
+    ASSERT_TRUE(db.GetGameByAppId(L"itch_bogus_ghost_999").has_value());
+
+    // Run ScanAll - should prune obsolete ghost game not found in actual scans
+    GameExplorer::StorefrontScanner::ScanAll(db);
+    ASSERT_FALSE(db.GetGameByAppId(L"itch_bogus_ghost_999").has_value());
+
+    db.Close();
+    if (fs::exists(tempDbPath)) fs::remove(tempDbPath);
 }

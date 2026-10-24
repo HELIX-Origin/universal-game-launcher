@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <mutex>
+#include <thread>
 #include <gdiplus.h>
 #include <shlwapi.h>
 #include <shellapi.h>
@@ -186,15 +187,22 @@ wuxmi::BitmapImage LoadLocalBitmap(const std::wstring& filePath) {
 
 } // namespace
 
+static thread_local wux::Hosting::WindowsXamlManager s_xamlManager{ nullptr };
+
 struct ShellView::XamlState {
-    wux::Hosting::WindowsXamlManager xamlManager{ nullptr };
     wux::Hosting::DesktopWindowXamlSource xamlSource{ nullptr };
     wuxc::Grid rootGrid{ nullptr };
     wuxc::Border sidepaneHost{ nullptr };
 };
 
+static std::vector<GameItem> s_cachedGames;
+static std::vector<ProviderViewModel> s_cachedProviders;
+static bool s_cacheValid = false;
+static std::atomic<bool> s_isLoadingData{ false };
+constexpr UINT WM_APP_LIBRARY_LOADED = WM_APP + 44;
+
 ShellView::ShellView(ShellFolder* pFolder)
-    : m_pFolder(pFolder), m_xaml(std::make_unique<XamlState>()) {
+    : m_pFolder(pFolder) {
     ++g_dllRefCount;
     if (m_pFolder != nullptr) {
         m_pFolder->AddRef();
@@ -277,45 +285,25 @@ void ShellView::RefreshData() {
     m_isDarkMode = DarkMode::IsSystemDarkMode();
     m_layoutMode = SettingsManager::GetLayoutMode();
 
-    m_providers.clear();
-    auto addProviderIfInstalled = [&](PlatformType plat, const wchar_t* name, const wchar_t* company, const std::wstring& exe, const std::wstring& iconOverride = L"") {
-        if (exe.empty() || !fs::exists(exe)) return;
-        ProviderViewModel p{};
-        p.platform = plat;
-        p.name = name;
-        p.company = company;
-        p.executablePath = exe;
-        p.iconPngPath = EnsureExtractedIconPng(std::wstring(L"prov_") + name, iconOverride.empty() ? exe : iconOverride);
-        m_providers.push_back(std::move(p));
-    };
-
-    addProviderIfInstalled(PlatformType::Steam,       L"Steam",           L"Valve Corporation",      PlatformLauncher::GetSteamExecutablePath());
-    addProviderIfInstalled(PlatformType::Epic,        L"Epic Games",      L"Epic Games, Inc.",       PlatformLauncher::GetEpicExecutablePath());
-    addProviderIfInstalled(PlatformType::GOG,         L"GOG GALAXY",      L"CD PROJEKT / GOG",       PlatformLauncher::GetGOGGalaxyExecutablePath());
-    addProviderIfInstalled(PlatformType::Xbox,        L"Xbox",            L"Microsoft Corporation",  PlatformLauncher::GetXboxExecutablePath(), PlatformLauncher::GetXboxIconPath());
-    addProviderIfInstalled(PlatformType::BattleNet,   L"Battle.net",      L"Blizzard Entertainment", PlatformLauncher::GetBattleNetExecutablePath());
-    addProviderIfInstalled(PlatformType::Ubisoft,     L"Ubisoft Connect", L"Ubisoft",                PlatformLauncher::GetUbisoftExecutablePath());
-    addProviderIfInstalled(PlatformType::EAApp,       L"EA App",          L"Electronic Arts",        PlatformLauncher::GetEAAppExecutablePath());
-    addProviderIfInstalled(PlatformType::Itch,        L"itch.io",         L"itch corp.",             PlatformLauncher::GetItchExecutablePath());
-    addProviderIfInstalled(PlatformType::Amazon,      L"Amazon Games",    L"Amazon.com, Inc.",       PlatformLauncher::GetAmazonExecutablePath());
-    addProviderIfInstalled(PlatformType::LegacyGames, L"Legacy Games",    L"Legacy Games, Inc.",     PlatformLauncher::GetLegacyGamesExecutablePath());
-    addProviderIfInstalled(PlatformType::Jagex,       L"Jagex Launcher",  L"Jagex Ltd",              PlatformLauncher::GetJagexExecutablePath());
-    addProviderIfInstalled(PlatformType::XIVLauncher, L"XIVLauncher",     L"Goatcorp / FFXIV",       PlatformLauncher::GetXIVLauncherExecutablePath());
-    addProviderIfInstalled(PlatformType::GuildWars2,  L"Guild Wars 2",    L"ArenaNet",               PlatformLauncher::GetGuildWars2ExecutablePath());
-    addProviderIfInstalled(PlatformType::Rockstar,    L"Rockstar Games",  L"Rockstar Games",         PlatformLauncher::GetRockstarExecutablePath());
-    addProviderIfInstalled(PlatformType::Riot,        L"Riot Client",     L"Riot Games",             PlatformLauncher::GetRiotExecutablePath());
-    addProviderIfInstalled(PlatformType::HoYoPlay,    L"HoYoPlay",        L"COGNOSPHERE",            PlatformLauncher::GetHoYoPlayExecutablePath());
-    addProviderIfInstalled(PlatformType::Paradox,     L"Paradox Launcher",L"Paradox Interactive",    PlatformLauncher::GetParadoxExecutablePath());
-    addProviderIfInstalled(PlatformType::ESDE,        L"ES-DE",           L"EmulationStation DE",    PlatformLauncher::GetESDEExecutablePath());
-
-    m_games = StorefrontScanner::ScanAllInstalledGames();
-    for (auto& g : m_games) {
-        if (g.iconPath.empty() && !g.executablePath.empty()) {
-            g.iconPath = EnsureExtractedIconPng(g.appId, g.executablePath);
-        } else if (!g.iconPath.empty()) {
-            g.iconPath = EnsureExtractedIconPng(g.appId, g.iconPath);
+    if (s_cacheValid) {
+        m_providers = s_cachedProviders;
+        m_games = s_cachedGames;
+        if (m_selectedGameIndex >= static_cast<int>(m_games.size())) {
+            m_selectedGameIndex = -1;
         }
+        if (m_selectedProviderIndex >= static_cast<int>(m_providers.size())) {
+            m_selectedProviderIndex = -1;
+        }
+        return;
     }
+
+    auto& db = Database::Instance();
+    if (!db.IsOpen()) {
+        db.Open(Storage::GetDatabasePath());
+    }
+
+    m_games = db.GetAllGames();
+    m_providers = s_cachedProviders;
 
     if (m_selectedGameIndex >= static_cast<int>(m_games.size())) {
         m_selectedGameIndex = -1;
@@ -323,6 +311,125 @@ void ShellView::RefreshData() {
     if (m_selectedProviderIndex >= static_cast<int>(m_providers.size())) {
         m_selectedProviderIndex = -1;
     }
+}
+
+void ShellView::ShowLoadingState() {
+    if (!m_xaml || !m_xaml->rootGrid) return;
+
+    m_xaml->rootGrid.Children().Clear();
+    m_xaml->rootGrid.RowDefinitions().Clear();
+    m_xaml->rootGrid.ColumnDefinitions().Clear();
+
+    const auto bgCanvas    = m_isDarkMode ? MakeBrush(255, 20, 20, 20)    : MakeBrush(255, 250, 250, 250);
+    const auto textPrimary = m_isDarkMode ? MakeBrush(255, 255, 255, 255) : MakeBrush(255, 20, 20, 20);
+    const auto textSec     = m_isDarkMode ? MakeBrush(255, 170, 170, 170) : MakeBrush(255, 100, 100, 100);
+
+    m_xaml->rootGrid.RequestedTheme(m_isDarkMode ? wux::ElementTheme::Dark : wux::ElementTheme::Light);
+    m_xaml->rootGrid.Background(bgCanvas);
+
+    wuxc::StackPanel loadPanel;
+    loadPanel.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    loadPanel.VerticalAlignment(wux::VerticalAlignment::Center);
+    loadPanel.Spacing(12);
+
+    wuxc::ProgressRing ring;
+    ring.IsActive(true);
+    ring.Width(44);
+    ring.Height(44);
+    loadPanel.Children().Append(ring);
+
+    wuxc::TextBlock tbMsg;
+    tbMsg.Text(L"Loading games library...");
+    tbMsg.FontSize(15);
+    tbMsg.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    tbMsg.Foreground(textPrimary);
+    tbMsg.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    loadPanel.Children().Append(tbMsg);
+
+    wuxc::TextBlock tbSub;
+    tbSub.Text(L"Reading cataloged titles in background");
+    tbSub.FontSize(12);
+    tbSub.Foreground(textSec);
+    tbSub.HorizontalAlignment(wux::HorizontalAlignment::Center);
+    loadPanel.Children().Append(tbSub);
+
+    m_xaml->rootGrid.Children().Append(loadPanel);
+}
+
+void ShellView::LoadDataAsync(HWND hwnd) {
+    m_isDarkMode = DarkMode::IsSystemDarkMode();
+    m_layoutMode = SettingsManager::GetLayoutMode();
+
+    if (s_cacheValid) {
+        m_providers = s_cachedProviders;
+        m_games = s_cachedGames;
+        BuildXamlViewport();
+        return;
+    }
+
+    ShowLoadingState();
+
+    if (s_isLoadingData.exchange(true)) {
+        return;
+    }
+
+    std::thread([hwnd]() {
+        std::vector<ProviderViewModel> provs;
+        auto addProviderIfInstalled = [&](PlatformType plat, const wchar_t* name, const wchar_t* company, const std::wstring& exe, const std::wstring& iconOverride = L"") {
+            if (exe.empty()) return;
+            std::error_code ec;
+            if (!fs::exists(exe, ec)) return;
+            ProviderViewModel p{};
+            p.platform = plat;
+            p.name = name;
+            p.company = company;
+            p.executablePath = exe;
+            p.iconPngPath = EnsureExtractedIconPng(std::wstring(L"prov_") + name, iconOverride.empty() ? exe : iconOverride);
+            provs.push_back(std::move(p));
+        };
+
+        addProviderIfInstalled(PlatformType::Steam,       L"Steam",           L"Valve Corporation",      PlatformLauncher::GetSteamExecutablePath());
+        addProviderIfInstalled(PlatformType::Epic,        L"Epic Games",      L"Epic Games, Inc.",       PlatformLauncher::GetEpicExecutablePath());
+        addProviderIfInstalled(PlatformType::GOG,         L"GOG GALAXY",      L"CD PROJEKT / GOG",       PlatformLauncher::GetGOGGalaxyExecutablePath());
+        addProviderIfInstalled(PlatformType::Xbox,        L"Xbox",            L"Microsoft Corporation",  PlatformLauncher::GetXboxExecutablePath(), PlatformLauncher::GetXboxIconPath());
+        addProviderIfInstalled(PlatformType::BattleNet,   L"Battle.net",      L"Blizzard Entertainment", PlatformLauncher::GetBattleNetExecutablePath());
+        addProviderIfInstalled(PlatformType::Ubisoft,     L"Ubisoft Connect", L"Ubisoft",                PlatformLauncher::GetUbisoftExecutablePath());
+        addProviderIfInstalled(PlatformType::EAApp,       L"EA App",          L"Electronic Arts",        PlatformLauncher::GetEAAppExecutablePath());
+        addProviderIfInstalled(PlatformType::Itch,        L"itch.io",         L"itch corp.",             PlatformLauncher::GetItchExecutablePath());
+        addProviderIfInstalled(PlatformType::Amazon,      L"Amazon Games",    L"Amazon.com, Inc.",       PlatformLauncher::GetAmazonExecutablePath());
+        addProviderIfInstalled(PlatformType::LegacyGames, L"Legacy Games",    L"Legacy Games, Inc.",     PlatformLauncher::GetLegacyGamesExecutablePath());
+        addProviderIfInstalled(PlatformType::Jagex,       L"Jagex Launcher",  L"Jagex Ltd",              PlatformLauncher::GetJagexExecutablePath());
+        addProviderIfInstalled(PlatformType::XIVLauncher, L"XIVLauncher",     L"Goatcorp / FFXIV",       PlatformLauncher::GetXIVLauncherExecutablePath());
+        addProviderIfInstalled(PlatformType::GuildWars2,  L"Guild Wars 2",    L"ArenaNet",               PlatformLauncher::GetGuildWars2ExecutablePath());
+        addProviderIfInstalled(PlatformType::Rockstar,    L"Rockstar Games",  L"Rockstar Games",         PlatformLauncher::GetRockstarExecutablePath());
+        addProviderIfInstalled(PlatformType::Riot,        L"Riot Client",     L"Riot Games",             PlatformLauncher::GetRiotExecutablePath());
+        addProviderIfInstalled(PlatformType::HoYoPlay,    L"HoYoPlay",        L"COGNOSPHERE",            PlatformLauncher::GetHoYoPlayExecutablePath());
+        addProviderIfInstalled(PlatformType::Paradox,     L"Paradox Launcher",L"Paradox Interactive",    PlatformLauncher::GetParadoxExecutablePath());
+        addProviderIfInstalled(PlatformType::ESDE,        L"ES-DE",           L"EmulationStation DE",    PlatformLauncher::GetESDEExecutablePath());
+
+        auto& db = Database::Instance();
+        if (!db.IsOpen()) {
+            db.Open(Storage::GetDatabasePath());
+        }
+
+        std::vector<GameItem> games = db.GetAllGames();
+        for (auto& g : games) {
+            if (g.iconPath.empty() && !g.executablePath.empty()) {
+                g.iconPath = EnsureExtractedIconPng(g.appId, g.executablePath);
+            } else if (!g.iconPath.empty()) {
+                g.iconPath = EnsureExtractedIconPng(g.appId, g.iconPath);
+            }
+        }
+
+        s_cachedProviders = std::move(provs);
+        s_cachedGames = std::move(games);
+        s_cacheValid = true;
+        s_isLoadingData.store(false);
+
+        if (hwnd != nullptr && IsWindow(hwnd)) {
+            PostMessageW(hwnd, WM_APP_LIBRARY_LOADED, 0, 0);
+        }
+    }).detach();
 }
 
 void ShellView::LaunchCompanionExe(const wchar_t* exeName, const std::wstring& args) {
@@ -334,79 +441,6 @@ void ShellView::LaunchCompanionExe(const wchar_t* exeName, const std::wstring& a
             ShellExecuteW(m_hwndView, L"open", targetExe.c_str(), args.empty() ? nullptr : args.c_str(), dir.c_str(), SW_SHOWNORMAL);
         }
     }
-}
-
-uint64_t ShellView::ComputeEnvironmentStateHash() const {
-    uint64_t hash = 14695981039346656037ULL;
-    auto mix = [&](uint64_t v) {
-        hash ^= v;
-        hash *= 1099511628211ULL;
-    };
-
-    auto hashDirectoryState = [&](const fs::path& dir, const wchar_t* extFilter = nullptr) {
-        std::error_code ec;
-        if (!fs::exists(dir, ec)) return;
-        for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (extFilter != nullptr && entry.path().extension() != extFilter) continue;
-            for (const wchar_t ch : entry.path().filename().wstring()) {
-                mix(static_cast<uint64_t>(ch));
-            }
-            const auto ftime = entry.last_write_time(ec).time_since_epoch().count();
-            mix(static_cast<uint64_t>(ftime));
-        }
-    };
-
-    // 1. Metadata overrides directory (%USERPROFILE%\Game Explorer\metadata)
-    hashDirectoryState(Storage::GetMetadataPath(), L".json");
-
-    // 2. Steam library folders (appmanifest_*.acf)
-    const std::wstring steamExe = PlatformLauncher::GetSteamExecutablePath();
-    if (!steamExe.empty()) {
-        const std::wstring steamRoot = fs::path(steamExe).parent_path().wstring();
-        for (const auto& lib : StorefrontScanner::GetSteamLibraryFolders(steamRoot)) {
-            hashDirectoryState(fs::path(lib) / L"steamapps", L".acf");
-        }
-    }
-
-    // 3. Epic Games manifests
-    wchar_t progData[MAX_PATH] = { 0 };
-    if (GetEnvironmentVariableW(L"PROGRAMDATA", progData, MAX_PATH) > 0) {
-        hashDirectoryState(fs::path(progData) / L"Epic" / L"EpicGamesLauncher" / L"Data" / L"Manifests", L".item");
-    }
-
-    // 4. Itch.io butler.db timestamp
-    wchar_t appData[MAX_PATH] = { 0 };
-    if (GetEnvironmentVariableW(L"APPDATA", appData, MAX_PATH) > 0) {
-        std::error_code ec;
-        const fs::path butlerDb = fs::path(appData) / L"itch" / L"db" / L"butler.db";
-        if (fs::exists(butlerDb, ec)) {
-            mix(static_cast<uint64_t>(fs::last_write_time(butlerDb, ec).time_since_epoch().count()));
-        }
-        const fs::path bDbWal = fs::path(appData) / L"itch" / L"db" / L"butler.db-wal";
-        if (fs::exists(bDbWal, ec)) {
-            mix(static_cast<uint64_t>(fs::last_write_time(bDbWal, ec).time_since_epoch().count()));
-        }
-    }
-
-    // 5. Mounted drives XboxGames / Games directories
-    for (const auto& drive : StorefrontScanner::GetAllMountedDrives()) {
-        hashDirectoryState(fs::path(drive) / L"XboxGames");
-        hashDirectoryState(fs::path(drive) / L"Games" / L"XboxGames");
-        hashDirectoryState(fs::path(drive) / L"Games" / L"EA Games");
-        hashDirectoryState(fs::path(drive) / L"Games" / L"Ubisoft");
-        hashDirectoryState(fs::path(drive) / L"Games" / L"Battle.net");
-    }
-
-    // 6. Count of AppModel\Repository\Packages (Xbox / Microsoft Store games)
-    HKEY hPkgs = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages", 0, KEY_READ, &hPkgs) == ERROR_SUCCESS) {
-        DWORD subKeys = 0;
-        RegQueryInfoKeyW(hPkgs, nullptr, nullptr, nullptr, &subKeys, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-        mix(static_cast<uint64_t>(subKeys));
-        RegCloseKey(hPkgs);
-    }
-
-    return hash;
 }
 
 void ShellView::SwitchLayoutMode(LayoutMode mode) {
@@ -841,7 +875,8 @@ void ShellView::BuildXamlViewport() {
     btnRefresh.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
     btnRefresh.Padding(wux::ThicknessHelper::FromLengths(12, 5, 12, 5));
     btnRefresh.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
-        Refresh();
+        s_cacheValid = false;
+        LoadDataAsync(m_hwndView);
     });
     rightToolbar.Children().Append(btnRefresh);
 
@@ -990,7 +1025,67 @@ void ShellView::BuildXamlViewport() {
     mainStack.Children().Append(gamesHeaderBtn);
 
     if (m_gamesExpanded) {
-        if (m_layoutMode == LayoutMode::DetailsView) {
+        if (m_games.empty()) {
+            wuxc::Border emptyCard;
+            emptyCard.Background(bgCard);
+            emptyCard.BorderBrush(borderBrush);
+            emptyCard.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+            emptyCard.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(8));
+            emptyCard.Padding(wux::ThicknessHelper::FromLengths(28, 24, 28, 24));
+            emptyCard.Margin(wux::ThicknessHelper::FromLengths(0, 8, 0, 8));
+
+            wuxc::StackPanel emptyStack;
+            emptyStack.Spacing(8);
+
+            wuxc::TextBlock emptyTitle;
+            emptyTitle.Text(L"No games cataloged yet");
+            emptyTitle.FontSize(15);
+            emptyTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+            emptyTitle.Foreground(textPrimary);
+
+            wuxc::TextBlock emptyDesc;
+            emptyDesc.Text(L"Populate your library by scanning installed storefronts in Windows Game Explorer Settings or add custom games.");
+            emptyDesc.FontSize(13);
+            emptyDesc.Foreground(textSec);
+            emptyDesc.TextWrapping(wux::TextWrapping::Wrap);
+
+            wuxc::StackPanel btnStack;
+            btnStack.Orientation(wuxc::Orientation::Horizontal);
+            btnStack.Spacing(10);
+            btnStack.Margin(wux::ThicknessHelper::FromLengths(0, 8, 0, 0));
+
+            wuxc::Button btnScanNow;
+            btnScanNow.Content(winrt::box_value(L"Open Settings to Scan"));
+            btnScanNow.Background(accentBrush);
+            btnScanNow.Foreground(whiteBrush);
+            btnScanNow.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+            btnScanNow.Padding(wux::ThicknessHelper::FromLengths(14, 6, 14, 6));
+            btnScanNow.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+                LaunchCompanionExe(L"GameExplorerConfig.exe");
+            });
+
+            wuxc::Button btnAddCustom;
+            btnAddCustom.Content(winrt::box_value(L"Add Custom Game"));
+            btnAddCustom.Background(bgCard);
+            btnAddCustom.BorderBrush(borderBrush);
+            btnAddCustom.BorderThickness(wux::ThicknessHelper::FromUniformLength(1));
+            btnAddCustom.Foreground(textPrimary);
+            btnAddCustom.CornerRadius(wux::CornerRadiusHelper::FromUniformRadius(6));
+            btnAddCustom.Padding(wux::ThicknessHelper::FromLengths(14, 6, 14, 6));
+            btnAddCustom.Click([this](wf::IInspectable const&, wux::RoutedEventArgs const&) {
+                LaunchCompanionExe(L"GameExplorerManager.exe");
+            });
+
+            btnStack.Children().Append(btnScanNow);
+            btnStack.Children().Append(btnAddCustom);
+
+            emptyStack.Children().Append(emptyTitle);
+            emptyStack.Children().Append(emptyDesc);
+            emptyStack.Children().Append(btnStack);
+            emptyCard.Child(emptyStack);
+
+            mainStack.Children().Append(emptyCard);
+        } else if (m_layoutMode == LayoutMode::DetailsView) {
             // Structured Table List Mode
             wuxc::StackPanel listStack;
             listStack.Spacing(4);
@@ -1188,8 +1283,8 @@ void ShellView::BuildXamlViewport() {
 }
 
 IFACEMETHODIMP ShellView::Refresh() {
-    RefreshData();
-    BuildXamlViewport();
+    s_cacheValid = false;
+    LoadDataAsync(m_hwndView);
     return S_OK;
 }
 
@@ -1218,16 +1313,6 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
     }
     if (hwndParent == nullptr) return E_FAIL;
 
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = g_hInstance;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
-    wc.lpszClassName = VIEW_CLASS_NAME;
-    RegisterClassExW(&wc);
-
     int viewX = prcView->left;
     int viewY = prcView->top;
     int viewW = prcView->right - prcView->left;
@@ -1242,6 +1327,16 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
         viewY = rcParent.top;
     }
 
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = g_hInstance;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    wc.lpszClassName = VIEW_CLASS_NAME;
+    RegisterClassExW(&wc);
+
     m_hwndView = CreateWindowExW(
         0, VIEW_CLASS_NAME, L"GameExplorerXamlHost",
         WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
@@ -1250,9 +1345,11 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
     );
     if (m_hwndView == nullptr) return E_FAIL;
 
-    // Initialize WinUI XAML Island (DesktopWindowXamlSource) inside m_hwndView
     try {
-        m_xaml->xamlManager = wux::Hosting::WindowsXamlManager::InitializeForCurrentThread();
+        if (!s_xamlManager) {
+            s_xamlManager = wux::Hosting::WindowsXamlManager::InitializeForCurrentThread();
+        }
+        m_xaml = std::make_shared<XamlState>();
         m_xaml->xamlSource = wux::Hosting::DesktopWindowXamlSource{};
 
         auto interop = m_xaml->xamlSource.as<IDesktopWindowXamlSourceNative>();
@@ -1268,29 +1365,7 @@ IFACEMETHODIMP ShellView::CreateViewWindow(
         m_xaml->rootGrid = wuxc::Grid{};
         m_xaml->xamlSource.Content(m_xaml->rootGrid);
 
-        RefreshData();
-        m_lastStateHash = ComputeEnvironmentStateHash();
-        BuildXamlViewport();
-
-        // Register for live filesystem notifications on %USERPROFILE%\Game Explorer
-        PIDLIST_ABSOLUTE pidlWatch = nullptr;
-        if (SUCCEEDED(SHParseDisplayName(Storage::GetUserRootPath().c_str(), nullptr, &pidlWatch, 0, nullptr)) && pidlWatch != nullptr) {
-            SHChangeNotifyEntry entry{};
-            entry.pidl = pidlWatch;
-            entry.fRecursive = TRUE;
-            m_shChangeNotifyId = SHChangeNotifyRegister(
-                m_hwndView,
-                SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
-                SHCNE_UPDATEDIR | SHCNE_CREATE | SHCNE_DELETE | SHCNE_UPDATEITEM | SHCNE_RENAMEITEM,
-                WM_APP + 43,
-                1,
-                &entry
-            );
-            CoTaskMemFree(pidlWatch);
-        }
-
-        // Start lightweight background timer (every 5 seconds) to auto-detect newly installed games across all storefronts
-        SetTimer(m_hwndView, 1001, 5000, nullptr);
+        LoadDataAsync(m_hwndView);
     } catch (...) {
         // Fallback safety if XAML initialization encounters an exception
     }
@@ -1304,27 +1379,20 @@ IFACEMETHODIMP ShellView::DestroyViewWindow() {
         UIActivate(SVUIA_DEACTIVATE);
     }
 
-    if (m_hwndView != nullptr) {
-        KillTimer(m_hwndView, 1001);
-    }
-    if (m_shChangeNotifyId != 0) {
-        SHChangeNotifyDeregister(m_shChangeNotifyId);
-        m_shChangeNotifyId = 0;
-    }
-
     if (m_xaml) {
         try {
+            if (m_xaml->rootGrid) {
+                m_xaml->rootGrid.Children().Clear();
+                m_xaml->rootGrid = nullptr;
+            }
             m_xaml->sidepaneHost = nullptr;
-            m_xaml->rootGrid = nullptr;
             if (m_xaml->xamlSource) {
+                m_xaml->xamlSource.Content(nullptr);
                 m_xaml->xamlSource.Close();
                 m_xaml->xamlSource = nullptr;
             }
-            if (m_xaml->xamlManager) {
-                m_xaml->xamlManager.Close();
-                m_xaml->xamlManager = nullptr;
-            }
         } catch (...) {}
+        m_xaml = nullptr;
     }
 
     m_hwndXamlIsland = nullptr;
@@ -1332,6 +1400,7 @@ IFACEMETHODIMP ShellView::DestroyViewWindow() {
         DestroyWindow(m_hwndView);
         m_hwndView = nullptr;
     }
+
     if (m_pShellBrowser != nullptr) {
         m_pShellBrowser->Release();
         m_pShellBrowser = nullptr;
@@ -1398,40 +1467,43 @@ LRESULT CALLBACK ShellView::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
         pThis = reinterpret_cast<ShellView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
-    if (pThis != nullptr) {
-        switch (uMsg) {
-        case WM_SIZE: {
-            const int cx = LOWORD(lParam);
-            const int cy = HIWORD(lParam);
-            if (pThis->m_hwndXamlIsland != nullptr) {
-                SetWindowPos(pThis->m_hwndXamlIsland, nullptr, 0, 0, cx, cy, SWP_NOZORDER | SWP_SHOWWINDOW);
-            }
-            return 0;
+    switch (uMsg) {
+    case WM_SIZE: {
+        const int cx = LOWORD(lParam);
+        const int cy = HIWORD(lParam);
+        if (pThis != nullptr && pThis->m_hwndXamlIsland != nullptr && IsWindow(pThis->m_hwndXamlIsland)) {
+            SetWindowPos(pThis->m_hwndXamlIsland, nullptr, 0, 0, cx, cy, SWP_NOZORDER | SWP_SHOWWINDOW);
         }
-        case WM_SETTINGCHANGE: {
-            if (lParam != 0 && wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0) {
+        return 0;
+    }
+    case WM_SETTINGCHANGE: {
+        if (lParam != 0 && wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0) {
+            if (pThis != nullptr) {
                 pThis->Refresh();
             }
-            break;
         }
-        case WM_APP + 42:
-        case WM_APP + 43: {
-            pThis->Refresh();
-            pThis->m_lastStateHash = pThis->ComputeEnvironmentStateHash();
-            return 0;
+        break;
+    }
+    case WM_APP_LIBRARY_LOADED: {
+        if (pThis != nullptr) {
+            pThis->m_providers = s_cachedProviders;
+            pThis->m_games = s_cachedGames;
+            pThis->BuildXamlViewport();
         }
-        case WM_TIMER: {
-            if (wParam == 1001) {
-                const uint64_t curHash = pThis->ComputeEnvironmentStateHash();
-                if (curHash != pThis->m_lastStateHash) {
-                    pThis->m_lastStateHash = curHash;
-                    pThis->Refresh();
-                }
-                return 0;
-            }
-            break;
+        return 0;
+    }
+    case WM_APP + 42:
+    case WM_APP + 43: {
+        s_cacheValid = false;
+        if (pThis != nullptr) {
+            pThis->LoadDataAsync(hwnd);
         }
-        }
+        return 0;
+    }
+    case WM_NCDESTROY: {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        return 0;
+    }
     }
 
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);

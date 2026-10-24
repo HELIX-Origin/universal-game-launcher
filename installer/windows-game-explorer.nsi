@@ -4,7 +4,7 @@
 Unicode true
 
 !define APP_NAME "Windows Game Explorer"
-!define APP_VERSION "2.0.0"
+!define APP_VERSION "2.0.1"
 !define APP_PUBLISHER "HELIX Origin"
 !define APP_URL "https://github.com/HELIX-Origin/windows-game-explorer"
 !define APP_EXE_CONFIG "GameExplorerConfig.exe"
@@ -150,6 +150,10 @@ Section "Uninstall"
     ; Clean up registry
     DeleteRegKey SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\WindowsGameExplorer"
     DeleteRegKey SHCTX "Software\HELIX-Origin\WindowsGameExplorer"
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{1666B3DF-60A5-4EF3-8B80-962C82401CD1}"
+    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{1666B3DF-60A5-4EF3-8B80-962C82401CD1}"
+    DeleteRegKey HKLM "Software\Classes\CLSID\{1666B3DF-60A5-4EF3-8B80-962C82401CD1}"
+    DeleteRegKey HKCU "Software\Classes\CLSID\{1666B3DF-60A5-4EF3-8B80-962C82401CD1}"
 
     ; Notify shell
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'

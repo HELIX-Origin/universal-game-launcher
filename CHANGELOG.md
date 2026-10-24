@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-24
+
+### Added
+- **Asynchronous Background Scanning & Progress State**: Added a dedicated "Scan & Populate Library" background worker (`std::thread`) with UI progress indication and `WM_APP_SCAN_COMPLETE` in `GameExplorerConfig.exe`.
+- **Asynchronous Viewport Loading**: Added non-blocking asynchronous data loading (`LoadDataAsync`) with an animated WinUI `ProgressRing` in `ShellView` and instant in-memory cache playback (`s_cachedGames`, `s_cachedProviders`).
+- **Database Synchronization & Obsolete Game Pruning**: Updated `StorefrontScanner::ScanAll()` to automatically synchronize and prune stale, uninstalled, or ghost records from `library.db` while preserving user favorite states.
+- **Dedicated Pruning Unit Test**: Added `ScannerScanAllPrunesObsoleteGames` to `GameExplorerTests.exe` (11/11 tests passing).
+
+### Changed
+- Replaced the in-config Integration toggle button with developer command-line testing instructions (`regsvr32` / `regsvr32 /u`), cleanly separating developer testing from installer/uninstaller lifecycle hooks.
+
+### Fixed
+- **File Explorer 0xc000027b Crash on Tab Switch**: Resolved unhandled WinUI stowed exception (`Windows.UI.Xaml.dll` `0xc000027b`) by replacing window re-parenting with clean teardown (`Content(nullptr)` and `.Close()`) of `DesktopWindowXamlSource`, keeping thread-singleton `WindowsXamlManager` alive across view sessions, and serving cached catalog data instantly.
+- **Catalog Ghost Duplicates ("Games" copy of Crossdressing in Camelot & FFXIV Duplicate)**: Resolved duplicate entries caused by missing root backslashes (e.g. `E:Games` vs `E:\Games`) by enforcing canonical drive root formatting (`X:\`) in `NormalizeDirKey()`.
+- **Launcher Clients Cataloged as Games (Battle.net & Ubisoft Game Launcher)**: Excluded launcher client installations from the Games grid by expanding `IsBlacklistedExecutable()` with engine helpers (`battlenet.overlay.runtime.exe`, `battlenet.exe`, `agent.exe`, etc.) and enforcing case-insensitive directory filters across `ScanBattleNet()`, `ScanUbisoft()`, `ScanEA()`, and `ScanAmazon()`.
+- **Dual-Mode Uninstaller HKLM/HKCU Registry Cleanup**: Updated `installer/windows-game-explorer.nsi` to explicitly unregister `Desktop\NameSpace` entries across both `HKLM` and `HKCU` root hives during uninstallation.
+
 ## [2.0.0] - 2026-10-24
 
 ### Added
@@ -49,5 +66,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Removed
 - Removed all legacy Tauri v2, Rust, Node.js, and external scraper (IGDB, SteamGridDB, VNDB) dependencies and configuration inputs.
 
-[Unreleased]: https://github.com/HELIX-Origin/windows-game-explorer/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/HELIX-Origin/windows-game-explorer/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/HELIX-Origin/windows-game-explorer/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/HELIX-Origin/windows-game-explorer/compare/v1.4.1...v2.0.0

@@ -206,7 +206,7 @@ std::wstring ReadEditString(HWND hEdit) {
 
 BOOL CALLBACK BroadcastRefreshToShellViews(HWND hwnd, LPARAM lParam) {
     wchar_t cls[128] = { 0 };
-    if (GetClassNameW(hwnd, cls, 128) > 0 && wcscmp(cls, L"GameExplorerNativeView") == 0) {
+    if (GetClassNameW(hwnd, cls, 128) > 0 && (wcscmp(cls, L"GameExplorerXamlHostViewClass") == 0 || wcscmp(cls, L"GameExplorerNativeView") == 0)) {
         PostMessageW(hwnd, WM_APP + 42, 0, 0);
     }
     EnumChildWindows(hwnd, BroadcastRefreshToShellViews, lParam);

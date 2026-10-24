@@ -115,6 +115,10 @@ std::wstring NormalizeDirKey(const std::wstring& dirPath) {
         }
         collapsed.push_back(static_cast<wchar_t>(::towlower(norm[i])));
     }
+    // Ensure drive letter has backslash (e.g., "e:games" -> "e:\games")
+    if (collapsed.size() >= 2 && collapsed[1] == L':' && (collapsed.size() == 2 || collapsed[2] != L'\\')) {
+        collapsed.insert(2, 1, L'\\');
+    }
     while (collapsed.size() > 3 && collapsed.back() == L'\\') {
         collapsed.pop_back();
     }
@@ -549,6 +553,11 @@ bool StorefrontScanner::IsBlacklistedExecutable(const std::wstring& filename) {
         L"setup.exe",
         L"battle.net.exe",
         L"battle.net launcher.exe",
+        L"battlenet.exe",
+        L"battlenet.overlay.runtime.exe",
+        L"agent.exe",
+        L"blizzarderror.exe",
+        L"blizzarderror64.exe",
         L"ubisoftconnect.exe",
         L"ubisoftgamelauncher.exe",
         L"ubisoftgamelauncher64.exe",
@@ -587,10 +596,30 @@ size_t StorefrontScanner::ScanAll(Database& db) {
     size_t total = 0;
     const auto allGames = ScanAllInstalledGames();
 
-    db.BeginTransaction();
+    std::set<std::wstring> validAppIds;
     for (const auto& game : allGames) {
+        validAppIds.insert(game.appId);
+    }
+
+    const auto existing = db.GetAllGames();
+
+    db.BeginTransaction();
+    for (auto game : allGames) {
+        for (const auto& ex : existing) {
+            if (ex.appId == game.appId && ex.isFavorite) {
+                game.isFavorite = true;
+                break;
+            }
+        }
         if (db.UpsertGame(game)) {
             ++total;
+        }
+    }
+
+    // Prune stale, uninstalled, or obsolete ghost games from the database
+    for (const auto& ex : existing) {
+        if (validAppIds.count(ex.appId) == 0) {
+            db.DeleteGame(ex.id);
         }
     }
     db.CommitTransaction();
@@ -1147,9 +1176,13 @@ std::vector<GameItem> StorefrontScanner::ScanBattleNet() {
             for (const auto& entry : fs::directory_iterator(bnetDir, ec)) {
                 if (!entry.is_directory()) continue;
                 const std::wstring folderName = entry.path().filename().wstring();
-                if (folderName.rfind(L"Battle.net", 0) == 0 ||
-                    _wcsicmp(folderName.c_str(), L"Blizzard Error") == 0 ||
-                    _wcsicmp(folderName.c_str(), L"Agent") == 0) {
+                std::wstring lowerFolder = folderName;
+                std::transform(lowerFolder.begin(), lowerFolder.end(), lowerFolder.begin(), ::towlower);
+                if (lowerFolder.rfind(L"battle.net", 0) == 0 ||
+                    lowerFolder == L".battle.net" ||
+                    lowerFolder == L"blizzard error" ||
+                    lowerFolder == L"agent" ||
+                    lowerFolder == L"games") {
                     continue;
                 }
                 const std::wstring normKey = NormalizeDirKey(entry.path().wstring());
@@ -1527,8 +1560,11 @@ std::vector<GameItem> StorefrontScanner::ScanUbisoft() {
             for (const auto& entry : fs::directory_iterator(dir, ec)) {
                 if (!entry.is_directory()) continue;
                 const std::wstring folderName = entry.path().filename().wstring();
-                if (_wcsicmp(folderName.c_str(), L"Ubisoft Game Launcher") == 0 ||
-                    _wcsicmp(folderName.c_str(), L"games") == 0) {
+                std::wstring lowerFolder = folderName;
+                std::transform(lowerFolder.begin(), lowerFolder.end(), lowerFolder.begin(), ::towlower);
+                if (lowerFolder == L"ubisoft game launcher" ||
+                    lowerFolder.rfind(L"ubisoft", 0) == 0 ||
+                    lowerFolder == L"games") {
                     continue;
                 }
                 std::wstring lower = entry.path().wstring();
@@ -1689,8 +1725,12 @@ std::vector<GameItem> StorefrontScanner::ScanEA() {
             for (const auto& entry : fs::directory_iterator(dir, ec)) {
                 if (!entry.is_directory()) continue;
                 const std::wstring folderName = entry.path().filename().wstring();
-                if (_wcsicmp(folderName.c_str(), L"Ubisoft Game Launcher") == 0 ||
-                    _wcsicmp(folderName.c_str(), L"games") == 0) {
+                std::wstring lowerFolder = folderName;
+                std::transform(lowerFolder.begin(), lowerFolder.end(), lowerFolder.begin(), ::towlower);
+                if (lowerFolder == L"electronic arts" ||
+                    lowerFolder == L"ea desktop" ||
+                    lowerFolder == L"origin" ||
+                    lowerFolder == L"games") {
                     continue;
                 }
                 std::wstring lower = entry.path().wstring();
@@ -1776,8 +1816,11 @@ std::vector<GameItem> StorefrontScanner::ScanAmazon() {
             for (const auto& entry : fs::directory_iterator(dir, ec)) {
                 if (!entry.is_directory()) continue;
                 const std::wstring folderName = entry.path().filename().wstring();
-                if (_wcsicmp(folderName.c_str(), L"Ubisoft Game Launcher") == 0 ||
-                    _wcsicmp(folderName.c_str(), L"games") == 0) {
+                std::wstring lowerFolder = folderName;
+                std::transform(lowerFolder.begin(), lowerFolder.end(), lowerFolder.begin(), ::towlower);
+                if (lowerFolder == L"amazon games" ||
+                    lowerFolder == L"app" ||
+                    lowerFolder == L"games") {
                     continue;
                 }
                 std::wstring lower = entry.path().wstring();

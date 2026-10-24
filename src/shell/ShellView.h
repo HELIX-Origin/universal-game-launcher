@@ -58,17 +58,19 @@ public:
     IFACEMETHODIMP QueryStatus(const GUID* pguidCmdGroup, ULONG cCmds, OLECMD prgCmds[], OLECMDTEXT* pCmdText) override;
     IFACEMETHODIMP Exec(const GUID* pguidCmdGroup, DWORD nCmdID, DWORD nCmdexecopt, VARIANT* pvaIn, VARIANT* pvaOut) override;
 
-private:
     struct XamlState;
+
+private:
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
     void RefreshData();
+    void LoadDataAsync(HWND hwnd);
+    void ShowLoadingState();
     void BuildXamlViewport();
     void RebuildSidepane();
     void SwitchLayoutMode(LayoutMode mode);
     void LaunchCompanionExe(const wchar_t* exeName, const std::wstring& args = L"");
-    uint64_t ComputeEnvironmentStateHash() const;
 
     std::atomic<ULONG> m_refCount{ 1 };
     ShellFolder* m_pFolder{ nullptr };
@@ -76,9 +78,7 @@ private:
 
     HWND m_hwndView{ nullptr };
     HWND m_hwndXamlIsland{ nullptr };
-    ULONG m_shChangeNotifyId{ 0 };
-    uint64_t m_lastStateHash{ 0 };
-    std::unique_ptr<XamlState> m_xaml;
+    std::shared_ptr<XamlState> m_xaml;
 
     FOLDERSETTINGS m_folderSettings{};
     LayoutMode m_layoutMode{ LayoutMode::CoverArt };

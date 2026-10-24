@@ -130,7 +130,7 @@ HRESULT RegisterServer(HMODULE hModule) {
     SetRegistryDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel", SZ_CLSID_GAME_EXPLORER, 1);
     SetRegistryDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\ClassicStartMenu", SZ_CLSID_GAME_EXPLORER, 1);
 
-    // 4. Try HKLM registration if elevated
+    // 4. Register in HKLM if running with Administrator privileges (required for File Explorer navigation pane)
     SetRegistryValue(HKEY_LOCAL_MACHINE, clsidKey, L"", SZ_GAME_EXPLORER_TITLE);
     SetRegistryValue(HKEY_LOCAL_MACHINE, clsidKey, L"Icon", iconPath);
     SetRegistryDword(HKEY_LOCAL_MACHINE, clsidKey, L"System.IsPinnedToNameSpaceTree", 1);

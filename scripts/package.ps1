@@ -56,8 +56,14 @@ function Find-MakeNSIS {
 $MakeNSIS = Find-MakeNSIS
 Write-Host "[Windows Game Explorer] Found NSIS compiler: $MakeNSIS" -ForegroundColor Cyan
 
+$AppVer = "2.0.1"
+$nsiContent = Get-Content -LiteralPath $InstallerScript -Raw -ErrorAction SilentlyContinue
+if ($nsiContent -match '!define\s+APP_VERSION\s+"([^"]+)"') {
+    $AppVer = $Matches[1]
+}
+
 # Package portable ZIP asset as well
-$ZipPath = Join-Path $DistDir "windows-game-explorer-v2.0.0-win64.zip"
+$ZipPath = Join-Path $DistDir "windows-game-explorer-v$AppVer-win64.zip"
 if (Test-Path -LiteralPath $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
@@ -77,7 +83,7 @@ Write-Host "  -> SHA256: $ZipHash" -ForegroundColor DarkGray
 
 # Compile NSIS Setup Installer
 Write-Host "[Windows Game Explorer] Compiling NSIS installer..." -ForegroundColor Cyan
-$SetupPath = Join-Path $DistDir "windows-game-explorer-v2.0.0-setup.exe"
+$SetupPath = Join-Path $DistDir "windows-game-explorer-v$AppVer-setup.exe"
 if (Test-Path -LiteralPath $SetupPath) {
     Remove-Item -LiteralPath $SetupPath -Force
 }

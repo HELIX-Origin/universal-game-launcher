@@ -33,11 +33,12 @@ The project's definitive vision is recreating the classic **Windows 7/Vista Game
 - **Compiler**: MSVC 19.51 / CMake 4.3.1 (Visual Studio 2026 BuildTools)
 - **Compilation Gate**: `/W4 /WX /permissive- /utf-8` enforced across all targets (`sqlite3`, `GameExplorerCore`, `GameExplorerConfig`, `GameExplorerManager`, `GameExplorerShell`, `GameExplorerTests`).
 - **Result**: 0 compiler warnings, 0 linker warnings, 0 errors.
-- **Unit Tests**: `GameExplorerTests.exe` -> 10/10 passed (`pwsh -NoProfile -File scripts/test.ps1 -Configuration Release`).
+- **Unit Tests**: `GameExplorerTests.exe` -> 11/11 passed (`pwsh -NoProfile -File scripts/test.ps1 -Configuration Release`).
 
 ---
 
 ## 3) Next Immediate Priorities
 
 1. **Post-v2.0.0 Maintenance**:
-   - Monitor user feedback on `v2.0.0` storefront discovery and Windows 11 File Explorer shell integration.
+   - Tab switching stability and `DesktopWindowXamlSource` teardown verified.
+   - Catalog normalization, deduplication, and database synchronization verified with 11 unit tests passing.
